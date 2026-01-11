@@ -1,0 +1,62 @@
+# DoH 测试配置
+log:
+  enabled: true
+  path: "./logs/creskyDNS.log"
+  level: "debug"
+  max_time: 7d
+  max_size: 100MB
+  max_backups: 10
+  format: "|{date}|{time}|{level}|creskyDNS|{module}|{message}|"
+
+listener:
+  main: 5353
+
+cache:
+  main:
+    size: 1000
+    min_ttl: 60
+    max_ttl: 86400
+
+# 测试不同的 DoH 服务器
+upstreams:
+  google_doh:
+    addresses:
+      - "https://dns.google/dns-query"
+    timeout: 5
+    retry: 2
+
+  cloudflare_doh:
+    addresses:
+      - "https://cloudflare-dns.com/dns-query"
+    timeout: 5
+    retry: 2
+
+  alidns_doh:
+    addresses:
+      - "https://dns.alidns.com/dns-query"
+    timeout: 5
+    retry: 2
+
+# 测试路由规则
+rules:
+  - domain: "google.com"
+    upstream: "google_doh"
+    policy: proxy
+  
+  - domain: "cloudflare.com"
+    upstream: "cloudflare_doh"
+    policy: proxy
+  
+  - domain: "*.cn"
+    upstream: "alidns_doh"
+    policy: direct
+  
+  - domain: "taobao.com"
+    upstream: "alidns_doh"
+    policy: direct
+
+# 默认上游
+default_upstream: "google_doh"
+
+# 超时设置
+timeout_secs: 5

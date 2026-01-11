@@ -36,8 +36,9 @@ async fn main() -> Result<()> {
         if let Some(path) = path_copy {
             match list.load().await {
                 Ok(_) => {
-                    info!("域名列表 '{}' 从文件 '{}' 加载成功: {} 个域名",
-                          name, &path, list.domains.len());
+                    let item_type = if list.r#type == "ipcidr" { "条记录" } else { "个域名" };
+                    info!("域名列表 '{}' 从文件 '{}' 加载成功: {} {}",
+                          name, &path, list.domains.len(), item_type);
                 }
                 Err(e) => {
                     error!("域名列表 '{}' 从文件 '{}' 加载失败: {}",
@@ -56,8 +57,13 @@ async fn main() -> Result<()> {
 
     // 显示所有域名列表
     for (name, list) in &config.lists {
-        info!("域名列表 '{}' (类型: {}, 格式: {}): {} 个域名",
-              name, list.r#type, list.format, list.domains.len());
+        let item_desc = if list.r#type == "ipcidr" {
+            format!("{} 条记录", list.domains.len())
+        } else {
+            format!("{} 个域名", list.domains.len())
+        };
+        info!("域名列表 '{}' (类型: {}, 格式: {}): {}",
+              name, list.r#type, list.format, item_desc);
     }
 
     // 显示所有上游列表

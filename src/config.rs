@@ -58,6 +58,19 @@ pub struct CacheConfig {
     pub max_ttl: Option<u64>,
 }
 
+/// Final 规则配置
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalRule {
+    /// 主要上游服务器
+    pub primary_upstream: String,
+    /// 备用上游服务器
+    pub fallback_upstream: String,
+    /// IP CIDR 列表名称（用于判定国家代码）
+    pub ipcidr: String,
+    /// 输出文件路径（记录未分类域名）
+    pub output: Option<String>,
+}
+
 /// DNS 转发器配置
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -69,6 +82,8 @@ pub struct Config {
     pub upstreams: HashMap<String, UpstreamList>,
     /// 规则配置 (按 YAML 顺序保留，使用 IndexMap 确保顺序)
     pub rules: IndexMap<String, Vec<String>>,
+    /// Final 规则配置（可选）
+    pub final_rule: Option<FinalRule>,
     /// 请求超时时间（秒）
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
@@ -129,6 +144,7 @@ impl Default for Config {
             lists,
             upstreams,
             rules,
+            final_rule: None,
             timeout_secs: 5,
             cache,
         }

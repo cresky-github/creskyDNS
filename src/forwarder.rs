@@ -124,27 +124,25 @@ impl DnsForwarder {
         }
         
         // 3. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
-        let (upstream_list, rule_name, upstream_list_name) = if let Some(cached_upstream) = upstream_name {
+        let (upstream_list, rule_name, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
             // Rule Cache 命中，直接使用缓存的上游
             let upstream_list = self.config.upstreams.get(&cached_upstream)
                 .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
-            (upstream_list, format!("cached:{}", cached_upstream), cached_upstream)
+            let response = self.forward_to_upstream_list(request, upstream_list).await?;
+            (upstream_list, format!("cached:{}", cached_upstream), cached_upstream, response)
         } else {
             // Rule Cache 未命中，执行规则匹配
-            let (upstream_list, rule_name) = self.match_domain(&qname)?;
+            let (upstream_list, rule_name, response) = self.match_domain(&qname, request).await?;
             let upstream_list_name = self.extract_upstream_name(&rule_name);
-            (upstream_list, rule_name, upstream_list_name)
+            (upstream_list, rule_name, upstream_list_name, response)
         };
         
-        // 4. 向上游查询
-        let response = self.forward_to_upstream_list(request, upstream_list).await?;
-        
-        // 5. 写入 Rule Cache
+        // 4. 写入 Rule Cache（原来的步骤5）
         if let Some(rule_cache) = &self.rule_cache {
             rule_cache.insert(qname.clone(), upstream_list_name.clone());
         }
         
-        // 6. 写入 Domain Cache
+        // 5. 写入 Domain Cache（原来的步骤6）
         if let Some(cache) = &self.domain_cache {
             // 从响应中提取最小 TTL
             let ttl = self.extract_min_ttl(&response);
@@ -155,14 +153,57 @@ impl DnsForwarder {
     }
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
-    fn match_domain(&self, domain: &str) -> Result<(&UpstreamList, String)> {
+    async fn match_domain(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, Message)> {
         // 首先尝试服务器规则匹配
         if let Some((server_upstream, rule_name)) = self.match_server_rule(domain)? {
-            return Ok((server_upstream, rule_name));
+            let response = self.forward_to_upstream_list(request, server_upstream).await?;
+            return Ok((server_upstream, rule_name, response));
         }
 
         // 如果没有服务器规则，则按域名规则匹配
-        self.match_domain_rules(domain)
+        match self.match_domain_rules(domain) {
+            Ok((upstream, rule_name)) => {
+                let response = self.forward_to_upstream_list(request, upstream).await?;
+                Ok((upstream, rule_name, response))
+            }
+            Err(e) if e.to_string() == "NO_MATCH" => {
+                // 未匹配任何规则，尝试 Final 规则或默认上游
+                self.handle_no_match(domain, request).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 处理未匹配任何规则的情况
+    async fn handle_no_match(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, Message)> {
+        // 如果配置了 Final 规则，使用 Final 规则处理
+        if let Some(final_rule) = &self.config.final_rule {
+            debug!("域名 {} 未匹配任何规则，触发 Final 规则", domain);
+            return self.process_final_rule(domain, request, final_rule).await;
+        }
+
+        // 如果没有 Final 规则，使用默认上游降级
+        let default_upstream_names = vec!["default_dns", "cn_dns", "direct_dns", "global_dns"];
+        
+        for upstream_name in default_upstream_names {
+            if let Some(upstream) = self.config.upstreams.get(upstream_name) {
+                debug!("域名 {} 未匹配任何规则，使用默认上游 '{}'", domain, upstream_name);
+                let rule_name = format!("default:{}", upstream_name);
+                let response = self.forward_to_upstream_list(request, upstream).await?;
+                return Ok((upstream, rule_name, response));
+            }
+        }
+        
+        // 如果连默认上游都没有，使用第一个可用的上游
+        if let Some((name, upstream)) = self.config.upstreams.iter().next() {
+            debug!("域名 {} 未匹配任何规则，使用第一个可用上游 '{}'", domain, name);
+            let rule_name = format!("fallback:{}", name);
+            let response = self.forward_to_upstream_list(request, upstream).await?;
+            return Ok((upstream, rule_name, response));
+        }
+
+        // 如果没有任何上游，返回错误
+        anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
     }
 
     /// 匹配服务器规则（按实例）
@@ -198,27 +239,8 @@ impl DnsForwarder {
             }
         }
 
-        // 如果没有匹配任何规则，尝试使用默认上游
-        // 优先尝试 default_dns，然后尝试任何可用的上游
-        let default_upstream_names = vec!["default_dns", "cn_dns", "direct_dns", "global_dns"];
-        
-        for upstream_name in default_upstream_names {
-            if let Some(upstream) = self.config.upstreams.get(upstream_name) {
-                debug!("域名 {} 未匹配任何规则，使用默认上游 '{}'", domain, upstream_name);
-                let rule_name = format!("default:{}", upstream_name);
-                return Ok((upstream, rule_name));
-            }
-        }
-        
-        // 如果连默认上游都没有，使用第一个可用的上游
-        if let Some((name, upstream)) = self.config.upstreams.iter().next() {
-            debug!("域名 {} 未匹配任何规则，使用第一个可用上游 '{}'", domain, name);
-            let rule_name = format!("fallback:{}", name);
-            return Ok((upstream, rule_name));
-        }
-
-        // 如果没有任何上游，返回错误
-        anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
+        // 未匹配任何规则，返回 None 表示需要走 Final 规则或默认上游
+        anyhow::bail!("NO_MATCH")
     }
 
     /// 在单个group内找到最优匹配
@@ -663,5 +685,149 @@ impl DnsForwarder {
         
         debug!("H3 收到来自 {} 的响应", upstream_addr);
         Ok(message)
+    }
+
+    /// 处理 Final 规则
+    /// 1. 使用 primary_upstream 查询
+    /// 2. 检查返回的 IP 是否在指定的 ipcidr 列表中匹配到 CN
+    /// 3. 如果是 CN，采用 primary 结果；否则使用 fallback_upstream 再查询
+    /// 4. 将域名写入 output 文件
+    async fn process_final_rule(
+        &self, 
+        domain: &str,
+        request: &Message, 
+        final_rule: &crate::config::FinalRule
+    ) -> Result<(&UpstreamList, String, Message)> {
+        use std::io::Write;
+        use std::fs::OpenOptions;
+        
+        // 1. 使用 primary_upstream 查询
+        let primary_upstream = self.config.upstreams.get(&final_rule.primary_upstream)
+            .ok_or_else(|| anyhow::anyhow!("Final 规则的 primary_upstream '{}' 未找到", final_rule.primary_upstream))?;
+        
+        debug!("Final 规则: 使用 primary_upstream '{}' 查询域名 {}", final_rule.primary_upstream, domain);
+        let primary_response = self.forward_to_upstream_list(request, primary_upstream).await?;
+        
+        // 2. 从响应中提取 IP 地址
+        let ips = self.extract_ips_from_response(&primary_response);
+        
+        // 3. 检查 IP 是否在 CN 的 CIDR 列表中
+        let is_cn = if let Some(ipcidr_list) = self.config.lists.get(&final_rule.ipcidr) {
+            ips.iter().any(|ip| self.is_ip_in_cidr_list(ip, &ipcidr_list.domains))
+        } else {
+            false
+        };
+        
+        // 4. 根据 IP 归属决定使用哪个结果
+        let (final_upstream, final_response, upstream_name) = if is_cn {
+            debug!("Final 规则: 域名 {} 的 IP 属于 CN，使用 primary 结果", domain);
+            (primary_upstream, primary_response, final_rule.primary_upstream.clone())
+        } else {
+            debug!("Final 规则: 域名 {} 的 IP 不属于 CN，使用 fallback_upstream '{}'", domain, final_rule.fallback_upstream);
+            let fallback_upstream = self.config.upstreams.get(&final_rule.fallback_upstream)
+                .ok_or_else(|| anyhow::anyhow!("Final 规则的 fallback_upstream '{}' 未找到", final_rule.fallback_upstream))?;
+            let fallback_response = self.forward_to_upstream_list(request, fallback_upstream).await?;
+            (fallback_upstream, fallback_response, final_rule.fallback_upstream.clone())
+        };
+        
+        // 5. 将域名写入 output 文件（如果配置了）
+        if let Some(output_path) = &final_rule.output {
+            if let Err(e) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output_path)
+                .and_then(|mut file| writeln!(file, "{}", domain.trim_end_matches('.')))
+            {
+                debug!("Final 规则: 写入 output 文件失败: {}", e);
+            }
+        }
+        
+        let rule_name = format!("final:{}", upstream_name);
+        Ok((final_upstream, rule_name, final_response))
+    }
+
+    /// 从 DNS 响应中提取 IP 地址
+    fn extract_ips_from_response(&self, response: &Message) -> Vec<String> {
+        let mut ips = Vec::new();
+        
+        // 从答案记录中提取 A 和 AAAA 记录的 IP
+        for answer in response.answers() {
+            if let Some(rdata) = answer.data() {
+                let ip_str = format!("{}", rdata);
+                // 简单提取 IP 地址（需要更精确的解析）
+                if ip_str.contains('.') || ip_str.contains(':') {
+                    ips.push(ip_str);
+                }
+            }
+        }
+        
+        ips
+    }
+
+    /// 检查 IP 是否在 CIDR 列表中（简化实现）
+    /// CIDR 列表格式：|CIDR|country_code|，例如：|39.156.0.0/16|CN|
+    fn is_ip_in_cidr_list(&self, ip: &str, cidr_list: &[String]) -> bool {
+        use std::net::IpAddr;
+        
+        // 解析 IP 地址
+        let ip_addr: IpAddr = match ip.parse() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+        
+        // 遍历 CIDR 列表，检查是否匹配 CN
+        for cidr_entry in cidr_list {
+            // 格式：|CIDR|country_code|
+            let parts: Vec<&str> = cidr_entry.split('|').collect();
+            if parts.len() >= 3 {
+                let cidr = parts[1].trim();
+                let country = parts[2].trim();
+                
+                // 只检查 CN 的 CIDR
+                if country == "CN" {
+                    if self.ip_in_cidr(&ip_addr, cidr) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+
+    /// 检查 IP 是否在 CIDR 范围内（简化实现）
+    fn ip_in_cidr(&self, ip: &std::net::IpAddr, cidr: &str) -> bool {
+        use std::net::IpAddr;
+        
+        // 解析 CIDR
+        let parts: Vec<&str> = cidr.split('/').collect();
+        if parts.len() != 2 {
+            return false;
+        }
+        
+        let network: IpAddr = match parts[0].parse() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+        
+        let prefix_len: u8 = match parts[1].parse() {
+            Ok(len) => len,
+            Err(_) => return false,
+        };
+        
+        // 简单实现：只支持 IPv4
+        match (ip, network) {
+            (IpAddr::V4(ip_v4), IpAddr::V4(net_v4)) => {
+                let ip_bits = u32::from(*ip_v4);
+                let net_bits = u32::from(net_v4);
+                let mask = if prefix_len == 0 {
+                    0
+                } else {
+                    !0u32 << (32 - prefix_len)
+                };
+                (ip_bits & mask) == (net_bits & mask)
+            }
+            _ => false,
+        }
     }
 }
