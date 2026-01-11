@@ -172,25 +172,32 @@ impl DnsForwarder {
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
     async fn match_domain(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
-        // 1. 首先检查 servers 规则（优先级最高）
-        if let Some((server_upstream, rule_name)) = self.match_server_rule(listener_name)? {
-            let response = self.forward_to_upstream_list(request, server_upstream).await?;
-            // servers 规则不记录匹配的域名，使用空字符串
-            return Ok((server_upstream, rule_name, String::new(), response));
-        }
-
-        // 2. 然后按域名规则匹配（pre、main）
-        match self.match_domain_rules(domain) {
-            Ok((upstream, rule_name, matched_domain)) => {
+        // 按 yaml 中 rules 的顺序遍历所有规则组
+        for (group_name, rules) in &self.config.rules {
+            // 跳过 final 规则，它在 handle_no_match 中处理
+            if group_name == "final" {
+                continue;
+            }
+            
+            // servers 规则：按监听器匹配
+            if group_name == "servers" {
+                if let Some((server_upstream, rule_name)) = self.match_server_rule(listener_name)? {
+                    let response = self.forward_to_upstream_list(request, server_upstream).await?;
+                    return Ok((server_upstream, rule_name, String::new(), response));
+                }
+                continue;
+            }
+            
+            // 其他规则组：按域名匹配
+            if let Some((upstream, matched_domain)) = self.find_best_match_in_group(domain, group_name, rules)? {
+                let rule_name = format!("{}:{}", group_name, matched_domain);
                 let response = self.forward_to_upstream_list(request, upstream).await?;
-                Ok((upstream, rule_name, matched_domain, response))
+                return Ok((upstream, rule_name, matched_domain, response));
             }
-            Err(e) if e.to_string() == "NO_MATCH" => {
-                // 3. 域名规则未匹配，尝试 Final 规则或全局默认上游
-                self.handle_no_match(domain, request, listener_name).await
-            }
-            Err(e) => Err(e),
         }
+        
+        // 所有规则组都未匹配，尝试 Final 规则或全局默认上游
+        self.handle_no_match(domain, request, listener_name).await
     }
 
     /// 处理未匹配任何规则的情况
