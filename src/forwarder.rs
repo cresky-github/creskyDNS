@@ -172,29 +172,29 @@ impl DnsForwarder {
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
     async fn match_domain(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
-        // 首先尝试服务器规则匹配
+        // 1. 首先检查 servers 规则（优先级最高）
         if let Some((server_upstream, rule_name)) = self.match_server_rule(listener_name)? {
             let response = self.forward_to_upstream_list(request, server_upstream).await?;
             // servers 规则不记录匹配的域名，使用空字符串
             return Ok((server_upstream, rule_name, String::new(), response));
         }
 
-        // 如果没有服务器规则，则按域名规则匹配
+        // 2. 然后按域名规则匹配（pre、main）
         match self.match_domain_rules(domain) {
             Ok((upstream, rule_name, matched_domain)) => {
                 let response = self.forward_to_upstream_list(request, upstream).await?;
                 Ok((upstream, rule_name, matched_domain, response))
             }
             Err(e) if e.to_string() == "NO_MATCH" => {
-                // 未匹配任何规则，尝试 Final 规则或默认上游
-                self.handle_no_match(domain, request).await
+                // 3. 域名规则未匹配，尝试 Final 规则或全局默认上游
+                self.handle_no_match(domain, request, listener_name).await
             }
             Err(e) => Err(e),
         }
     }
 
     /// 处理未匹配任何规则的情况
-    async fn handle_no_match(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, String, Message)> {
+    async fn handle_no_match(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
         // 如果配置了 Final 规则，使用 Final 规则处理
         if let Some(final_rule) = &self.config.final_rule {
             debug!("域名 {} 未匹配任何规则，触发 Final 规则", domain);
@@ -223,6 +223,7 @@ impl DnsForwarder {
 
         // 如果没有任何上游，返回错误
         anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
+    }
     }
 
     /// 匹配服务器规则（按监听器实例）
