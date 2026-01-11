@@ -158,7 +158,7 @@ impl DnsForwarder {
         if let Some(cache) = &self.domain_cache {
             // 从响应中提取最小 TTL
             let ttl = self.extract_min_ttl(&response);
-            cache.insert(qname.clone(), rule_name, response.clone(), ttl);
+            cache.insert(qname.clone(), rule_name.clone(), response.clone(), ttl);
         }
         
         // 记录响应结果
