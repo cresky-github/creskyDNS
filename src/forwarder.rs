@@ -436,6 +436,8 @@ impl DnsForwarder {
         match protocol {
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
+            // DoT 和 DoQ 目前不支持代理（需要 SOCKS5 库支持）
+            // 如需代理访问国际 DNS，建议使用 DoH 协议
             Protocol::Dot => self.forward_dot(request, upstream_addr).await,
             Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.proxy.as_ref()).await,
             Protocol::Doq => self.forward_doq(request, upstream_addr).await,
