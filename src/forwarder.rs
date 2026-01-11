@@ -136,7 +136,7 @@ impl DnsForwarder {
         }
         
         // 3. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
-        let (upstream_list, rule_name, matched_domain, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
+        let (_upstream_list, rule_name, matched_domain, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
             // Rule Cache 命中，直接使用缓存的上游
             let upstream_list = self.config.upstreams.get(&cached_upstream)
                 .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
@@ -189,7 +189,9 @@ impl DnsForwarder {
             }
             
             // 其他规则组：按域名匹配
-            if let Some((upstream, matched_domain)) = self.find_best_match_in_group(domain, group_name, rules)? {
+            if let Some((upstream_name, matched_domain)) = self.find_best_match_in_group(domain, rules) {
+                let upstream = self.config.upstreams.get(&upstream_name)
+                    .ok_or_else(|| anyhow::anyhow!("规则组 '{}' 中的上游 '{}' 未找到", group_name, upstream_name))?;
                 let rule_name = format!("{}:{}", group_name, matched_domain);
                 let response = self.forward_to_upstream_list(request, upstream).await?;
                 return Ok((upstream, rule_name, matched_domain, response));
@@ -201,7 +203,7 @@ impl DnsForwarder {
     }
 
     /// 处理未匹配任何规则的情况
-    async fn handle_no_match(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
+    async fn handle_no_match(&self, domain: &str, request: &Message, _listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
         // 如果配置了 Final 规则，使用 Final 规则处理
         if let Some(final_rule) = &self.config.final_rule {
             debug!("域名 {} 未匹配任何规则，触发 Final 规则", domain);
@@ -702,12 +704,12 @@ impl DnsForwarder {
         debug!("DoQ 已向 {} 发送 DNS 查询", upstream_addr);
 
         // 通过双向流接收响应
-        let (mut send, mut recv) = connection
+        let (_send, mut recv) = connection
             .open_bi()
             .await
             .map_err(|e| anyhow::anyhow!("打开 QUIC 双向流失败: {}", e))?;
 
-        let mut response_data: Vec<u8> = Vec::new();
+        let _response_data: Vec<u8> = Vec::new();
         let result = tokio::time::timeout(
             timeout,
             recv.read_to_end(4096)

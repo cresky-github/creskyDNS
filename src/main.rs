@@ -334,7 +334,6 @@ async fn run_tcp_listener(
     listener_name: String,
 ) -> Result<()> {
     use tokio::net::TcpListener;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listen_addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(&listen_addr).await?;
