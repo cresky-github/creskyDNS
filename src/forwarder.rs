@@ -145,20 +145,29 @@ impl DnsForwarder {
         } else {
             // Rule Cache 未命中，执行规则匹配
             let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
-            let upstream_list_name = self.extract_upstream_name(&rule_name);
+            // 从 rule_name 中提取 upstream_name
+            // rule_name 格式: "group:matched_domain@upstream" 或 "servers:upstream" 或 "cached:upstream"
+            let upstream_list_name = if rule_name.contains('@') {
+                // 格式: "group:matched_domain@upstream" -> 提取 @ 后的部分
+                rule_name.split('@').last().unwrap_or(&rule_name).to_string()
+            } else {
+                // 格式: "servers:upstream" 或 "cached:upstream" -> 提取 : 后的部分
+                self.extract_upstream_name(&rule_name)
+            };
             (upstream_list, rule_name, matched_domain, upstream_list_name, response)
         };
         
-        // 4. 写入 Rule Cache（原来的步骤5）
+        // 4. 写入 Rule Cache
+        // Rule Cache 存储: qname -> upstream_name（上游名称，不是匹配域名）
         if let Some(rule_cache) = &self.rule_cache {
             rule_cache.insert(qname.clone(), upstream_list_name.clone());
         }
         
-        // 5. 写入 Domain Cache（原来的步骤6）
+        // 5. 写入 Domain Cache
         if let Some(cache) = &self.domain_cache {
             // 从响应中提取最小 TTL
             let ttl = self.extract_min_ttl(&response);
-            // 使用匹配到的域名而非规则名称
+            // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
             let cache_rule = if matched_domain.is_empty() { rule_name.clone() } else { matched_domain.clone() };
             cache.insert(qname.clone(), cache_rule, response.clone(), ttl);
         }
@@ -192,7 +201,7 @@ impl DnsForwarder {
             if let Some((upstream_name, matched_domain)) = self.find_best_match_in_group(domain, rules) {
                 let upstream = self.config.upstreams.get(&upstream_name)
                     .ok_or_else(|| anyhow::anyhow!("规则组 '{}' 中的上游 '{}' 未找到", group_name, upstream_name))?;
-                let rule_name = format!("{}:{}", group_name, matched_domain);
+                let rule_name = format!("{}:{}@{}", group_name, matched_domain, upstream_name);  // 格式: group:matched_domain@upstream
                 let response = self.forward_to_upstream_list(request, upstream).await?;
                 return Ok((upstream, rule_name, matched_domain, response));
             }
