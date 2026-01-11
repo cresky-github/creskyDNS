@@ -37,12 +37,19 @@ impl DnsForwarder {
 
     /// 解析上游服务器地址
     fn parse_address(addr: &str) -> Result<(String, u16)> {
+        // 处理 DoH/DoT/QUIC 等协议，保留完整 URL
+        if addr.starts_with("https://") || addr.starts_with("https3://") {
+            // DoH 地址，返回完整 URL 和默认端口
+            return Ok((addr.to_string(), 443));
+        }
+        
         // 移除协议前缀
         let addr = addr
-            .strip_prefix("udp://").or(Some(addr)).unwrap()
-            .strip_prefix("tcp://").or(Some(addr)).unwrap()
-            .strip_prefix("tls://").or(Some(addr)).unwrap()
-            .strip_prefix("https://").or(Some(addr)).unwrap();
+            .strip_prefix("udp://").unwrap_or(addr)
+            .strip_prefix("tcp://").unwrap_or(addr)
+            .strip_prefix("tls://").unwrap_or(addr)
+            .strip_prefix("doq://").unwrap_or(addr)
+            .strip_prefix("quic://").unwrap_or(addr);
         
         if let Some((host, port_str)) = addr.rsplit_once(':') {
             let port = port_str.parse::<u16>()?;
@@ -414,8 +421,14 @@ impl DnsForwarder {
 
     /// UDP 转发
     async fn forward_udp(&self, request: &Message, upstream_addr: &str) -> Result<Message> {
+        // 检查是否为 HTTPS/DoH 地址
+        if upstream_addr.starts_with("https://") || upstream_addr.starts_with("https3://") {
+            anyhow::bail!("UDP 转发不支持 HTTPS/DoH 地址: {}", upstream_addr);
+        }
+        
         let (host, port) = Self::parse_address(upstream_addr)?;
-        let upstream_socket_addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+        let upstream_socket_addr: SocketAddr = format!("{}:{}", host, port).parse()
+            .map_err(|e| anyhow::anyhow!("无法解析地址 '{}:{}': {}", host, port, e))?;
 
         // 创建 UDP 套接字
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -451,8 +464,14 @@ impl DnsForwarder {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpStream;
 
+        // 检查是否为 HTTPS/DoH 地址
+        if upstream_addr.starts_with("https://") || upstream_addr.starts_with("https3://") {
+            anyhow::bail!("TCP 转发不支持 HTTPS/DoH 地址: {}", upstream_addr);
+        }
+
         let (host, port) = Self::parse_address(upstream_addr)?;
-        let upstream_socket_addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+        let upstream_socket_addr: SocketAddr = format!("{}:{}", host, port).parse()
+            .map_err(|e| anyhow::anyhow!("无法解析地址 '{}:{}': {}", host, port, e))?;
 
         // 连接到上游服务器
         let mut stream = TcpStream::connect(upstream_socket_addr).await?;
