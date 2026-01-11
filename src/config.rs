@@ -81,9 +81,10 @@ pub struct Config {
     /// 上游列表配置 (name -> config)
     pub upstreams: HashMap<String, UpstreamList>,
     /// 规则配置 (按 YAML 顺序保留，使用 IndexMap 确保顺序)
+    /// 注意：rules.final 会在加载后被提取到 final_rule 字段
     pub rules: IndexMap<String, Vec<String>>,
-    /// Final 规则配置（可选）
-    #[serde(rename = "final")]
+    /// Final 规则配置（可选，从 rules.final 中提取）
+    #[serde(skip)]
     pub final_rule: Option<FinalRule>,
     /// 请求超时时间（秒）
     #[serde(default = "default_timeout")]
@@ -184,7 +185,28 @@ impl Config {
     /// 从 YAML 文件加载配置
     pub fn from_yaml(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let config = serde_yaml::from_str(&content)?;
+        
+        // 先解析为 Value 以便手动处理 rules.final
+        let mut value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+        
+        // 提取 rules.final 如果存在
+        let final_rule = if let Some(rules) = value.get_mut("rules").and_then(|r| r.as_mapping_mut()) {
+            if let Some(final_value) = rules.remove(&serde_yaml::Value::String("final".to_string())) {
+                // 解析为 FinalRule
+                Some(serde_yaml::from_value::<FinalRule>(final_value)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // 解析剩余的配置
+        let mut config: Config = serde_yaml::from_value(value)?;
+        
+        // 设置 final_rule
+        config.final_rule = final_rule;
+        
         Ok(config)
     }
 
