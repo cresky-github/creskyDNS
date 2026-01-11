@@ -183,6 +183,11 @@ impl DnsForwarder {
     fn match_domain_rules(&self, domain: &str) -> Result<(&UpstreamList, String)> {
         // 按 YAML 顺序遍历所有规则组（IndexMap 保证顺序）
         for (group_name, rules) in &self.config.rules {
+            // 跳过 'final' 规则组，它在最后单独处理
+            if group_name == "final" {
+                continue;
+            }
+            
             // 在每个规则组内找到最优匹配
             if let Some(upstream_list) = self.find_best_match_in_group(domain, rules) {
                 debug!("域名 {} 在规则组 '{}' 中匹配到上游 '{}'", domain, group_name, upstream_list);
@@ -193,8 +198,27 @@ impl DnsForwarder {
             }
         }
 
-        // 如果没有匹配，返回错误
-        anyhow::bail!("域名 {} 未匹配到任何规则", domain)
+        // 如果没有匹配任何规则，尝试使用默认上游
+        // 优先尝试 default_dns，然后尝试任何可用的上游
+        let default_upstream_names = vec!["default_dns", "cn_dns", "direct_dns", "global_dns"];
+        
+        for upstream_name in default_upstream_names {
+            if let Some(upstream) = self.config.upstreams.get(upstream_name) {
+                debug!("域名 {} 未匹配任何规则，使用默认上游 '{}'", domain, upstream_name);
+                let rule_name = format!("default:{}", upstream_name);
+                return Ok((upstream, rule_name));
+            }
+        }
+        
+        // 如果连默认上游都没有，使用第一个可用的上游
+        if let Some((name, upstream)) = self.config.upstreams.iter().next() {
+            debug!("域名 {} 未匹配任何规则，使用第一个可用上游 '{}'", domain, name);
+            let rule_name = format!("fallback:{}", name);
+            return Ok((upstream, rule_name));
+        }
+
+        // 如果没有任何上游，返回错误
+        anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
     }
 
     /// 在单个group内找到最优匹配

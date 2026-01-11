@@ -21,7 +21,8 @@ pub struct DomainList {
     pub path: Option<String>,
     /// URL（可选）
     pub url: Option<String>,
-    /// 域名集合
+    /// 域名集合（可选，从文件加载时可以为空）
+    #[serde(default)]
     pub domains: Vec<String>,
     /// 重新加载间隔（秒）：0 表示文件改变立即加载，>0 表示间隔期间无视文件改变
     #[serde(default)]
