@@ -186,19 +186,33 @@ impl Config {
     pub fn from_yaml(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         
-        // 先解析为 Value 以便手动处理 rules.final
+        // 先解析为 Value 以便手动处理 final 配置
         let mut value: serde_yaml::Value = serde_yaml::from_str(&content)?;
         
-        // 提取 rules.final 如果存在
-        let final_rule = if let Some(rules) = value.get_mut("rules").and_then(|r| r.as_mapping_mut()) {
-            if let Some(final_value) = rules.remove(&serde_yaml::Value::String("final".to_string())) {
-                // 解析为 FinalRule
-                Some(serde_yaml::from_value::<FinalRule>(final_value)?)
+        // 提取 final 配置（支持两种位置）
+        let final_rule = {
+            // 1. 优先检查 rules.final
+            let from_rules = if let Some(rules) = value.get_mut("rules").and_then(|r| r.as_mapping_mut()) {
+                rules.remove(&serde_yaml::Value::String("final".to_string()))
+            } else {
+                None
+            };
+            
+            // 2. 如果 rules.final 不存在，检查顶层 final
+            let final_value = from_rules.or_else(|| {
+                if let Some(mapping) = value.as_mapping_mut() {
+                    mapping.remove(&serde_yaml::Value::String("final".to_string()))
+                } else {
+                    None
+                }
+            });
+            
+            // 3. 解析为 FinalRule
+            if let Some(final_val) = final_value {
+                Some(serde_yaml::from_value::<FinalRule>(final_val)?)
             } else {
                 None
             }
-        } else {
-            None
         };
         
         // 解析剩余的配置
