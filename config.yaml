@@ -109,7 +109,7 @@ rules:
     - main,cn_dns              # main 监听器 → 阿里 DNS
     # - backup,global_dns      # 可选：备用监听器 → Google DNS
 
-  # 主规则组（命中会追加到对应列表的 原名.hit.txt；servers 组除外）
+  # 主规则组（命中会追加到对应列表的 原名.hit.txt；若列表路径已含 .hit. 则不再记录；servers 组除外）
   main:
     - adblock,ad_hole         # 广告域名 → 黑洞
     - china_domains,cn_dns    # 国内域名 → 阿里 DNS

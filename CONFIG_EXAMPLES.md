@@ -330,8 +330,7 @@ rules:
 
 **规则命中追踪（新功能）**：
 - 当某个规则匹配成功后，命中的域名会追加到该规则使用的列表的命中文件“原名.hit.txt”。
-- 例：`./lists/china_domains.txt` → 生成 `./lists/china_domains.hit.txt`。
-- 每行一个域名（纯域名），用于后续优化与分析。
+- 例：`./lists/china_domains.txt` → 生成 `./lists/china_domains.hit.txt`。- **重要**：如果列表文件路径已包含 `.hit.`（如 `domains.hit.txt`），不会再创建 hit 文件。- 每行一个域名（纯域名），用于后续优化与分析。
 - 注意：`servers` 组不记录命中（不产生 .hit.txt）。
 
 ---

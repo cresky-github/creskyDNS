@@ -46,7 +46,7 @@ upstreams:
   #   port: 53
 
 lists:
-  # 域名列表（命中后用于选择上游，并会将命中的规则追踪写入原文件的 .hit.txt）
+  # 域名列表（命中后用于选择上游，并会将命中的规则追踪写入原文件的 .hit.txt；若路径已含 .hit. 则不再记录）
   domain_cn:
     type: domain
     path: "./lists/domain.cn.txt"     # 行示例：example.cn 或 *.example.cn
@@ -60,7 +60,7 @@ lists:
     path: "./lists/ipcidr.geo.txt"    # 行格式：|CIDR|country_code| 例如：|8.8.8.0/24|US|
 
 rules:
-  # 分组规则：命中即使用对应 upstream，且会将命中的规则追加写入“原名.hit.txt”（servers 组除外）
+  # 分组规则：命中即使用对应 upstream，且会将命中的规则追加写入"原名.hit.txt"（若路径已含 .hit. 则不再记录；servers 组除外）
   group:
     - name: cn
       list: domain_cn
