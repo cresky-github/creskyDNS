@@ -436,10 +436,9 @@ impl DnsForwarder {
         match protocol {
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
-            // DoT 和 DoQ 目前不支持代理（需要 SOCKS5 库支持）
-            // 如需代理访问国际 DNS，建议使用 DoH 协议
-            Protocol::Dot => self.forward_dot(request, upstream_addr).await,
+            Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.proxy.as_ref()).await,
             Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.proxy.as_ref()).await,
+            // DoQ 基于 UDP，SOCKS5 代理主要支持 TCP，暂不支持
             Protocol::Doq => self.forward_doq(request, upstream_addr).await,
             Protocol::H3 => self.forward_h3(request, upstream_addr).await,
         }
@@ -555,7 +554,8 @@ impl DnsForwarder {
     }
 
     /// DoT (DNS over TLS) 转发
-    async fn forward_dot(&self, request: &Message, upstream_addr: &str) -> Result<Message> {
+    /// DoT (DNS over TLS) 转发
+    async fn forward_dot(&self, request: &Message, upstream_addr: &str, proxy: Option<&String>) -> Result<Message> {
         // 提取主机名和端口
         let addr_part = upstream_addr.strip_prefix("tls://")
             .ok_or_else(|| anyhow::anyhow!("无效的 DoT 地址"))?
@@ -569,10 +569,29 @@ impl DnsForwarder {
         };
 
         let timeout = Duration::from_secs(self.config.timeout_secs);
-        let socket_addr = format!("{}:{}", host, port).parse::<SocketAddr>()?;
+        let socket_addr = format!("{}:{}", host, port);
 
-        // 创建 TLS 连接
-        let stream = TcpStream::connect(socket_addr).await?;
+        // 根据是否配置代理，选择连接方式
+        let stream = if let Some(proxy_url) = proxy {
+            // 通过 SOCKS5 代理连接
+            debug!("DoT 通过代理 {} 连接到 {}", proxy_url, socket_addr);
+            
+            // 解析代理地址
+            let proxy_addr = proxy_url
+                .strip_prefix("socks5://")
+                .or_else(|| proxy_url.strip_prefix("socks://"))
+                .unwrap_or(proxy_url);
+            
+            tokio_socks::tcp::Socks5Stream::connect(proxy_addr, socket_addr.as_str())
+                .await
+                .map_err(|e| anyhow::anyhow!("DoT SOCKS5 连接失败: {}", e))?
+                .into_inner()
+        } else {
+            // 直接连接
+            debug!("DoT 直连到 {}", socket_addr);
+            TcpStream::connect(&socket_addr).await?
+        };
+
         let root_store = Self::load_root_certs();
         let client_config = Arc::new(
             ClientConfig::builder()
