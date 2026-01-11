@@ -428,7 +428,7 @@ impl DnsForwarder {
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
             Protocol::Dot => self.forward_dot(request, upstream_addr).await,
-            Protocol::Doh => self.forward_doh(request, upstream_addr).await,
+            Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.proxy.as_ref()).await,
             Protocol::Doq => self.forward_doq(request, upstream_addr).await,
             Protocol::H3 => self.forward_h3(request, upstream_addr).await,
         }
@@ -616,7 +616,7 @@ impl DnsForwarder {
     }
 
     /// DoH (DNS over HTTPS) 转发
-    async fn forward_doh(&self, request: &Message, upstream_addr: &str) -> Result<Message> {
+    async fn forward_doh(&self, request: &Message, upstream_addr: &str, proxy: Option<&String>) -> Result<Message> {
         let url = upstream_addr.to_string();
         let timeout = Duration::from_secs(self.config.timeout_secs);
 
@@ -626,14 +626,24 @@ impl DnsForwarder {
         use base64::Engine;
         let dns_query = URL_SAFE_NO_PAD.encode(&request_data);
 
-        // 构建 DoH 请求，启用系统代理支持
-        // 会自动读取 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 等环境变量
-        let client = reqwest::Client::builder()
+        // 构建 DoH 请求，启用代理支持
+        let mut client_builder = reqwest::Client::builder()
             .timeout(timeout)
-            .use_rustls_tls()  // 使用 rustls 而不是 native-tls
-            .build()?;
+            .use_rustls_tls();
+        
+        // 如果配置了代理，优先使用配置的代理；否则使用系统代理
+        if let Some(proxy_url) = proxy {
+            debug!("DoH 使用配置的代理: {}", proxy_url);
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| anyhow::anyhow!("无效的代理配置 '{}': {}", proxy_url, e))?;
+            client_builder = client_builder.proxy(proxy);
+        } else {
+            debug!("DoH 使用系统代理环境变量（HTTP_PROXY、HTTPS_PROXY、ALL_PROXY）");
+        }
+        
+        let client = client_builder.build()?;
 
-        debug!("DoH 向 {} 发送查询（支持系统代理）", upstream_addr);
+        debug!("DoH 向 {} 发送查询", upstream_addr);
 
         let response = client
             .get(&url)
