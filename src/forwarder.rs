@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{UdpSocket, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::debug;
+use tracing::{debug, warn};
 use base64;
 use std::sync::Arc;
 use rustls::ClientConfig;
