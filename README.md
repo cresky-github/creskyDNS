@@ -49,7 +49,32 @@ cargo build --release
 ### 运行
 
 ```bash
+# 使用默认配置
 cargo run
+
+# 指定配置文件
+cargo run -- -c config.yaml
+
+# 指定工作目录和配置文件
+cargo run -- -w /opt/creskydns -c config.yaml
+
+# 查看帮助
+cargo run -- --help
+
+# 查看版本
+cargo run -- --version
+```
+
+或使用编译后的二进制文件：
+
+```bash
+# Windows
+.\target\release\creskyDNS.exe -c config.yaml
+.\target\release\creskyDNS.exe -w D:\MyConfig -c config.yaml
+
+# Linux/macOS
+./target/release/creskyDNS -c config.yaml
+./target/release/creskyDNS -w /opt/creskydns -c config.yaml
 ```
 
 DNS 转发器默认监听在 `127.0.0.1:5353`，将查询转发到 `8.8.8.8:53`。
@@ -60,14 +85,27 @@ DNS 转发器默认监听在 `127.0.0.1:5353`，将查询转发到 `8.8.8.8:53`�
 
 #### 1. 命令行参数
 ```bash
-cargo run config.yaml
-cargo run config.json
+# 使用 -c 或 --config 指定配置文件
+creskyDNS -c /etc/creskydns/config.yaml
+creskyDNS --config config.yaml
+
+# 使用 -w 或 --work-dir 指定工作目录
+creskyDNS -w /opt/creskydns -c config.yaml
+
+# 兼容旧版：直接指定配置文件（无参数）
+creskyDNS config.yaml
 ```
+
+**参数说明**：
+- `-c, --config <文件>` - 指定配置文件路径
+- `-w, --work-dir <目录>` - 指定工作目录（配置文件中的相对路径将基于此目录）
+- `-h, --help` - 显示帮助信息
+- `-v, --version` - 显示版本信息
 
 #### 2. 环境变量
 ```bash
 export DNS_FORWARDER_CONFIG=config.yaml
-cargo run
+creskyDNS
 ```
 
 #### 3. 默认位置

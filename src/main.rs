@@ -394,16 +394,104 @@ async fn handle_udp_query(
     Ok(())
 }
 
+/// 解析命令行参数
+fn parse_args() -> (Option<String>, Option<String>) {
+    let args: Vec<String> = env::args().collect();
+    let mut config_path: Option<String> = None;
+    let mut work_dir: Option<String> = None;
+    
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-c" | "--config" => {
+                if i + 1 < args.len() {
+                    config_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("错误: -c/--config 参数需要指定配置文件路径");
+                    std::process::exit(1);
+                }
+            }
+            "-w" | "--work-dir" => {
+                if i + 1 < args.len() {
+                    work_dir = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("错误: -w/--work-dir 参数需要指定工作目录");
+                    std::process::exit(1);
+                }
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            "-v" | "--version" => {
+                println!("CreskyDNS v{}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            _ => {
+                // 兼容旧的用法：直接指定配置文件路径（无参数）
+                if config_path.is_none() && !args[i].starts_with('-') {
+                    config_path = Some(args[i].clone());
+                    i += 1;
+                } else {
+                    eprintln!("错误: 未知参数 '{}'", args[i]);
+                    eprintln!("使用 -h 或 --help 查看帮助信息");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    
+    (config_path, work_dir)
+}
+
+/// 打印帮助信息
+fn print_help() {
+    println!("CreskyDNS - 智能 DNS 转发器");
+    println!();
+    println!("用法:");
+    println!("  creskyDNS [选项]");
+    println!("  creskyDNS [配置文件路径]  # 兼容旧版用法");
+    println!();
+    println!("选项:");
+    println!("  -c, --config <文件>    指定配置文件路径");
+    println!("  -w, --work-dir <目录>  指定工作目录（相对路径将基于此目录）");
+    println!("  -h, --help            显示此帮助信息");
+    println!("  -v, --version         显示版本信息");
+    println!();
+    println!("示例:");
+    println!("  creskyDNS -c /etc/creskydns/config.yaml");
+    println!("  creskyDNS -w /opt/creskydns -c config.yaml");
+    println!("  creskyDNS config.yaml  # 简写方式");
+    println!();
+    println!("配置文件查找顺序:");
+    println!("  1. 命令行参数指定的配置文件 (-c)");
+    println!("  2. 环境变量 DNS_FORWARDER_CONFIG");
+    println!("  3. 当前目录下的 config.yaml, config.yml, config.json");
+    println!("  4. ./etc/creskyDNS.yaml");
+    println!("  5. 使用内置默认配置");
+}
+
 /// 加载配置文件
 fn load_config() -> Result<Config> {
+    // 解析命令行参数
+    let (config_arg, work_dir) = parse_args();
+    
+    // 如果指定了工作目录，切换到该目录
+    if let Some(dir) = work_dir {
+        info!("切换工作目录到: {}", dir);
+        if let Err(e) = env::set_current_dir(&dir) {
+            return Err(anyhow::anyhow!("无法切换到工作目录 '{}': {}", dir, e));
+        }
+    }
+    
     // 优先级：命令行参数 > 环境变量 > 默认路径 > 默认配置
     
     // 1. 检查命令行参数
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        let config_path = &args[1];
-        info!("从配置文件加载: {}", config_path);
-        return Config::from_file(config_path);
+    if let Some(config_path) = config_arg {
+        info!("从命令行参数加载配置: {}", config_path);
+        return Config::from_file(&config_path);
     }
 
     // 2. 检查环境变量
