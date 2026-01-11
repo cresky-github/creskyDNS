@@ -1,4 +1,5 @@
 use crate::config::{Config, UpstreamList};
+use crate::cache::{DomainCache, RuleCache};
 use anyhow::Result;
 use hickory_proto::op::Message;
 use std::net::SocketAddr;
@@ -24,12 +25,14 @@ pub enum Protocol {
 /// DNS 转发器
 pub struct DnsForwarder {
     config: Config,
+    rule_cache: Option<RuleCache>,
+    domain_cache: Option<DomainCache>,
 }
 
 impl DnsForwarder {
     /// 创建新的 DNS 转发器
-    pub fn new(config: Config) -> Result<Self> {
-        Ok(Self { config })
+    pub fn new(config: Config, rule_cache: Option<RuleCache>, domain_cache: Option<DomainCache>) -> Result<Self> {
+        Ok(Self { config, rule_cache, domain_cache })
     }
 
     /// 解析上游服务器地址
@@ -99,16 +102,63 @@ impl DnsForwarder {
         let qname = crate::dns::get_qname(request)
             .ok_or_else(|| anyhow::anyhow!("无法获取查询名称"))?;
         
-        // 根据域名匹配规则选择上游
-        let upstream_list = self.match_domain(&qname)?;
-        self.forward_to_upstream_list(request, upstream_list).await
+        // 1. 查询 Rule Cache（最高优先级）
+        let upstream_name = if let Some(rule_cache) = &self.rule_cache {
+            if let Some(cached_upstream) = rule_cache.get(&qname) {
+                Some(cached_upstream)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // 2. 查询 Domain Cache（第二优先级）
+        if upstream_name.is_none() {
+            if let Some(cache) = &self.domain_cache {
+                if let Some(cached_response) = cache.get(&qname) {
+                    debug!("Domain Cache 命中: {}", qname);
+                    return Ok(cached_response);
+                }
+            }
+        }
+        
+        // 3. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
+        let (upstream_list, rule_name, upstream_list_name) = if let Some(cached_upstream) = upstream_name {
+            // Rule Cache 命中，直接使用缓存的上游
+            let upstream_list = self.config.upstreams.get(&cached_upstream)
+                .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
+            (upstream_list, format!("cached:{}", cached_upstream), cached_upstream)
+        } else {
+            // Rule Cache 未命中，执行规则匹配
+            let (upstream_list, rule_name) = self.match_domain(&qname)?;
+            let upstream_list_name = self.extract_upstream_name(&rule_name);
+            (upstream_list, rule_name, upstream_list_name)
+        };
+        
+        // 4. 向上游查询
+        let response = self.forward_to_upstream_list(request, upstream_list).await?;
+        
+        // 5. 写入 Rule Cache
+        if let Some(rule_cache) = &self.rule_cache {
+            rule_cache.insert(qname.clone(), upstream_list_name.clone());
+        }
+        
+        // 6. 写入 Domain Cache
+        if let Some(cache) = &self.domain_cache {
+            // 从响应中提取最小 TTL
+            let ttl = self.extract_min_ttl(&response);
+            cache.insert(qname.clone(), rule_name, response.clone(), ttl);
+        }
+        
+        Ok(response)
     }
 
-    /// 根据域名匹配规则
-    fn match_domain(&self, domain: &str) -> Result<&UpstreamList> {
+    /// 根据域名匹配规则（返回 upstream 和规则名称）
+    fn match_domain(&self, domain: &str) -> Result<(&UpstreamList, String)> {
         // 首先尝试服务器规则匹配
-        if let Some(server_upstream) = self.match_server_rule(domain)? {
-            return Ok(server_upstream);
+        if let Some((server_upstream, rule_name)) = self.match_server_rule(domain)? {
+            return Ok((server_upstream, rule_name));
         }
 
         // 如果没有服务器规则，则按域名规则匹配
@@ -116,7 +166,7 @@ impl DnsForwarder {
     }
 
     /// 匹配服务器规则（按实例）
-    fn match_server_rule(&self, domain: &str) -> Result<Option<&UpstreamList>> {
+    fn match_server_rule(&self, _domain: &str) -> Result<Option<(&UpstreamList, String)>> {
         // 这里可以根据服务器实例进行匹配
         // 暂时返回None，交给域名规则处理
         Ok(None)
@@ -130,14 +180,16 @@ impl DnsForwarder {
     /// 4. 取域名深度最大的规则
     /// 5. 如果深度相同，取group内最后一个匹配的规则
     /// 6. 一旦某个规则组有匹配，立即返回，不再检查后续规则组
-    fn match_domain_rules(&self, domain: &str) -> Result<&UpstreamList> {
+    fn match_domain_rules(&self, domain: &str) -> Result<(&UpstreamList, String)> {
         // 按 YAML 顺序遍历所有规则组（IndexMap 保证顺序）
         for (group_name, rules) in &self.config.rules {
             // 在每个规则组内找到最优匹配
             if let Some(upstream_list) = self.find_best_match_in_group(domain, rules) {
                 debug!("域名 {} 在规则组 '{}' 中匹配到上游 '{}'", domain, group_name, upstream_list);
-                return self.config.upstreams.get(&upstream_list)
-                    .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", upstream_list));
+                let upstream = self.config.upstreams.get(&upstream_list)
+                    .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", upstream_list))?;
+                let rule_name = format!("{}:{}", group_name, upstream_list);
+                return Ok((upstream, rule_name));
             }
         }
 
@@ -209,6 +261,34 @@ impl DnsForwarder {
         }
 
         None
+    }
+
+    /// 从 rule_name 中提取 upstream 名称
+    /// rule_name 格式: "group_name:upstream_name" 或 "cached:upstream_name"
+    fn extract_upstream_name(&self, rule_name: &str) -> String {
+        if let Some(colon_pos) = rule_name.rfind(':') {
+            rule_name[colon_pos + 1..].to_string()
+        } else {
+            rule_name.to_string()
+        }
+    }
+
+    /// 从 DNS 响应中提取最小 TTL
+    fn extract_min_ttl(&self, response: &Message) -> u64 {
+        let mut min_ttl = 300; // 默认 5 分钟
+
+        // 从答案、权威和附加记录中提取 TTL
+        for record in response.answers().iter()
+            .chain(response.name_servers().iter())
+            .chain(response.additionals().iter())
+        {
+            let ttl = record.ttl();
+            if ttl > 0 && ttl < min_ttl {
+                min_ttl = ttl;
+            }
+        }
+
+        min_ttl as u64
     }
 
     /// 转发到上游列表

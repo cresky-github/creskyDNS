@@ -1,0 +1,51 @@
+# 简单测试配置文件
+
+# 监听器
+listener:
+  main: 15353
+
+# 缓存配置
+cache:
+  default:
+    size: 1000
+    min_ttl: 60
+    max_ttl: 3600
+
+# 上游 DNS 服务器
+upstreams:
+  google:
+    addresses:
+      - "udp://8.8.8.8:53"
+  
+  cloudflare:
+    addresses:
+      - "udp://1.1.1.1:53"
+
+# 域名列表
+lists:
+  direct:
+    type: "direct"
+    format: "text"
+    domains:
+      - "baidu.com"
+      - "qq.com"
+      - "taobao.com"
+    interval: 0
+
+  proxy:
+    type: "proxy"
+    format: "text"
+    domains:
+      - "google.com"
+      - "youtube.com"
+      - "facebook.com"
+    interval: 0
+
+# 路由规则
+rules:
+  main:
+    - "direct,google"
+    - "proxy,cloudflare"
+
+# 超时时间
+timeout_secs: 5

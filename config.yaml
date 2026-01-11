@@ -39,26 +39,20 @@ cache:
 # 4) 上游 DNS（引用上述缓存）
 upstreams:
   cn_dns:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-    cache: "main"
-    timeout: 5000
+    addresses:
+      - "https://dns.alidns.com/dns-query"
 
   global_dns:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "main"
-    timeout: 5000
+    addresses:
+      - "https://dns.google/dns-query"
 
   ad_hole:
-    addr: "udp://127.0.0.1:1"      # 黑洞（拦截广告域名）
-    cache: "main"
-    timeout: 1000
+    addresses:
+      - "udp://127.0.0.1:1"      # 黑洞（拦截广告域名）
 
   local_dns:
-    addr: "udp://192.168.1.1:53"   # 内网 DNS（示例）
-    cache: "local"
-    timeout: 3000
+    addresses:
+      - "udp://192.168.1.1:53"   # 内网 DNS（示例）
 
 # 5) 列表（域名与 IP CIDR）
 lists:
@@ -68,7 +62,7 @@ lists:
     format: "text"
     path: "./lists/china_domains.txt"
     interval: 3600
-    description: "国内网站域名"
+    domains: []
 
   # 代理/国际域名列表（示例）
   global_domains:
@@ -76,7 +70,7 @@ lists:
     format: "text"
     path: "./lists/global_domains.txt"
     interval: 3600
-    description: "国际网站域名"
+    domains: []
 
   # 广告域名列表（示例）
   adblock:

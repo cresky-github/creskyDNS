@@ -14,29 +14,31 @@
 - ✅ 详细的日志记录
 - ✅ **域名列表热重新加载**：零停机更新域名列表
 - ✅ **百万级域名优化**：支持超大规模列表（毫秒级加载、微秒级查询）
-- ✅ **Rule Cache**：内存规则缓存，加速 DNS 解析（reload 时自动清空）
+- ✅ **两级缓存系统**：Rule Cache + Domain Cache，极速 DNS 解析
 
-## DNS 解析流程
+## DNS 解析流程（两级缓存优化）
 
 查询请求按以下顺序处理（性能优化）：
 
 ```
-1. Rule Cache（内存规则缓存）
-   ↓ 命中 → 直接使用缓存的 upstream 解析
+1️⃣  Rule Cache（规则缓存）
+   ↓ 命中 → 直接使用缓存的 upstream 解析（微秒级）
    ↓ 未命中
    
-2. DNS Cache（DNS 缓存）
-   ↓ 命中 → 返回缓存的 DNS 结果
+2️⃣  Domain Cache（DNS 缓存）
+   ↓ 命中 → 返回缓存的 DNS 结果（微秒级）
    ↓ 未命中
    
-3. Rules 规则匹配
+3️⃣  Rules 规则匹配
    ↓ 匹配成功 → 写入 Rule Cache
-   ↓ 使用对应 upstream 查询
-   ↓ 将结果写入 DNS Cache
+   ↓ 使用对应 upstream 查询（毫秒级）
+   ↓ 将结果写入 Domain Cache
    ↓ 返回查询结果
 ```
 
-**Rule Cache**：内存规则缓存，格式 `|rule|upstream|`，reload 时清空
+**两级缓存说明**：
+- **Rule Cache**：内存规则缓存，格式 `|domain|upstream|`，reload 时自动清空
+- **Domain Cache**：DNS 响应缓存，格式 `|cache_id|rule|domain|ttl|IP(...)|`，基于 TTL 过期
 
 ## 快速开始
 

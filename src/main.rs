@@ -12,9 +12,11 @@ use std::collections::HashMap;
 mod config;
 mod forwarder;
 mod dns;
+mod cache;
 
 use config::{Config, DomainListReloadState};
 use forwarder::DnsForwarder;
+use cache::{DomainCache, RuleCache};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -104,8 +106,37 @@ async fn main() -> Result<()> {
         }
     }
 
+    // 初始化 Rule Cache（内存规则缓存）
+    let rule_cache = RuleCache::new();
+    info!("Rule Cache 已启用");
+
+    // 初始化 Domain Cache
+    let domain_cache = if let Some(cache_config) = config.cache.get("default") {
+        let cache = DomainCache::new(
+            "default".to_string(),
+            cache_config.size,
+            cache_config.min_ttl,
+            cache_config.max_ttl,
+        );
+        info!("Domain Cache 已启用");
+        Some(cache)
+    } else {
+        info!("Domain Cache 未启用");
+        None
+    };
+
     // 创建转发器
-    let forwarder = Arc::new(DnsForwarder::new(config.clone())?);
+    let forwarder = Arc::new(DnsForwarder::new(config.clone(), Some(rule_cache.clone()), domain_cache.clone())?);
+
+    // 启动缓存清理任务（每 60 秒清理一次过期记录）
+    if let Some(cache) = domain_cache {
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(60)).await;
+                cache.cleanup_expired();
+            }
+        });
+    }
 
     // 启动域名列表重新加载监视任务
     let reload_config = config.clone();
