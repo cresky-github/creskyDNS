@@ -231,7 +231,6 @@ impl DnsForwarder {
         // 如果没有任何上游，返回错误
         anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
     }
-    }
 
     /// 匹配服务器规则（按监听器实例）
     fn match_server_rule(&self, listener_name: Option<&str>) -> Result<Option<(&UpstreamList, String)>> {
