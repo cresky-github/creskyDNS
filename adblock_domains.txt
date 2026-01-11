@@ -1,0 +1,23 @@
+# 广告域名屏蔽列表
+# 格式：每行一个域名，无前后缀
+
+ads.example.com
+advertisement.com
+banner.example.net
+mobads.example.com
+mobileads.com
+video-ads.example.com
+prerollads.com
+popads.example.com
+popup.example.net
+analytics.example.com
+tracking.example.org
+metrics.example.com
+doubleclick.net
+googlesyndication.com
+amazon-adsystem.com
+facebook.com.tr
+ads.twitter.com
+adsystem.amazon.com
+adsystem.google.com
+adsystem.facebook.com

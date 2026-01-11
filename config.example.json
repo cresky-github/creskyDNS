@@ -1,0 +1,70 @@
+{
+  "listener": {
+    "main": 5353,
+    "test": 5354
+  },
+  "cache": {
+    "main": {
+      "size": 10000,
+      "min_ttl": 60,
+      "max_ttl": 86400
+    },
+    "default": {
+      "size": 1000,
+      "min_ttl": 60,
+      "max_ttl": 86400
+    }
+  },
+  "upstreams": {
+    "ali": {
+      "addr": "https://dns.alidns.com/dns-query",
+      "bootstrap": "udp://223.5.5.5:53",
+      "cache": "main"
+    },
+    "google": {
+      "addr": "https://dns.google/dns-query",
+      "bootstrap": "udp://8.8.8.8:53",
+      "cache": "default"
+    },
+    "cloudflare": {
+      "addr": "https://cloudflare-dns.com/dns-query",
+      "bootstrap": "udp://1.1.1.1:53",
+      "cache": "default"
+    },
+    "local_dns": {
+      "addr": "udp://223.5.5.5:53"
+    },
+    "direct_dns": {
+      "addr": "udp://8.8.8.8:53",
+      "cache": "default"
+    },
+    "proxy_dns": {
+      "addr": "udp://1.1.1.1:53",
+      "cache": "default"
+    }
+  },
+  "lists": {
+    "direct": {
+      "type": "domain",
+      "path": "direct.txt",
+      "url": "https://example.com/direct.txt",
+      "interval": 86400
+    },
+    "proxy": {
+      "type": "domain",
+      "path": "proxy.txt",
+      "url": "https://example.com/proxy.txt",
+      "interval": 86400
+    }
+  },
+  "rules": {
+    "servers": [
+      "main,local_dns",
+      "test,cloudflare"
+    ],
+    "main": [
+      "direct,ali",
+      "proxy,google"
+    ]
+  }
+}

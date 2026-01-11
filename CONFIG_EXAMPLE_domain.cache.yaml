@@ -1,0 +1,60 @@
+# 配置结构示例：采用 domain.cache 与 rule.cache（内存）
+
+log:
+  enabled: true
+  path: "./logs/windspliving.log"
+  level: "info"
+  max_time: 3d
+  max_size: 10MB
+  max_backups: 5
+
+listener:
+  - address: "0.0.0.0:5353"
+
+# 原 cache → 现 domain.cache（名称变更，功能不变，键结构保持原意）
+domain.cache:
+  size: 50000           # 最大条目数（示例）
+  min_ttl: 30           # 最小 TTL（秒）
+  max_ttl: 3600         # 最大 TTL（秒）
+  output: "./output/domain.cache/main.cache.txt"  # 输出文件（行格式：|cache ID|rule|domain|ttl|IP(...)|）
+  cold_start:
+    enabled: true
+    timeout: 5000       # 单次查询超时（ms）
+    parallel: 10        # 并发恢复数
+
+upstreams:
+  default_upstream:
+    type: doh
+    url: "https://dns.example.com/dns-query"
+  intl_upstream:
+    type: doh
+    url: "https://dns.google/dns-query"
+
+lists:
+  domain_cn:
+    type: domain
+    path: "./lists/domain.cn.txt"       # 行：example.cn / *.example.cn 等
+  domain_ads:
+    type: domain
+    path: "./lists/domain.ads.txt"      # 行：ads.example.com / *.ads.example.com
+  ipcidr:
+    type: ipcidr
+    path: "./lists/ipcidr.geo.txt"      # 行：|CIDR|country_code|
+
+rules:
+  group:
+    - name: cn
+      list: domain_cn
+      upstream: default_upstream
+    - name: ads
+      list: domain_ads
+      upstream: intl_upstream
+  final:
+    primary_upstream: default_upstream
+    fallback_upstream: intl_upstream
+    output: "./output/final.hit.txt"
+
+# 解析流程参考：
+# 1) rule.cache：对请求域名做轻量规则匹配，若命中某 rule 且 rule.cache 中存在 |rule|upstream|，取其 upstream 作为 hint；
+# 2) domain.cache：尝试 |cache ID|rule|domain|ttl|IP(...)| 命中并未过期则直接返回；
+# 3) rules：按正常规则解析（含 primary/fallback 与 ipcidr 判断），成功后回写 rule.cache 与 domain.cache。

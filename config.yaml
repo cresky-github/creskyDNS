@@ -1,0 +1,123 @@
+# ============================================================
+# creskyDNS 完整配置示例
+# 保存为: ./config.yaml
+# ============================================================
+
+# 1) 日志（置顶，便于诊断与统一格式）
+log:
+  enabled: true
+  path: "./logs/creskyDNS.log"
+  level: "info"                 # trace/debug/info/warn/error
+  max_time: 7d                  # 轮转时间
+  max_size: 100MB               # 单文件最大
+  max_backups: 10               # 保留备份数量
+  format: "|{date}|{time}|{level}|creskyDNS|{module}|{message}|"
+
+# 2) 监听器（UDP+TCP）
+listener:
+  main: 5353            # 主监听端口
+  # backup: 5354        # 可选备用端口
+  # test: 5355          # 可选测试端口
+
+# 3) 缓存（在上游前定义，便于复用）
+cache:
+  main:
+    size: 10000
+    min_ttl: 60
+    max_ttl: 86400
+    output: "./output/cache/main.cache.txt"  # 可选，缓存输出文件
+    cold_start:                              # 可选，冷启动配置
+      enabled: true                          # 启用冷启动
+      timeout: 5000                          # 超时时间（毫秒）
+      parallel: 10                           # 并发查询数
+
+  local:
+    size: 1000
+    min_ttl: 300
+    max_ttl: 604800
+
+# 4) 上游 DNS（引用上述缓存）
+upstreams:
+  cn_dns:
+    addr: "https://dns.alidns.com/dns-query"
+    bootstrap: "udp://223.5.5.5:53"
+    cache: "main"
+    timeout: 5000
+
+  global_dns:
+    addr: "https://dns.google/dns-query"
+    bootstrap: "udp://8.8.8.8:53"
+    cache: "main"
+    timeout: 5000
+
+  ad_hole:
+    addr: "udp://127.0.0.1:1"      # 黑洞（拦截广告域名）
+    cache: "main"
+    timeout: 1000
+
+  local_dns:
+    addr: "udp://192.168.1.1:53"   # 内网 DNS（示例）
+    cache: "local"
+    timeout: 3000
+
+# 5) 列表（域名与 IP CIDR）
+lists:
+  # 国内域名列表（示例）
+  china_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/china_domains.txt"
+    interval: 3600
+    description: "国内网站域名"
+
+  # 代理/国际域名列表（示例）
+  global_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/global_domains.txt"
+    interval: 3600
+    description: "国际网站域名"
+
+  # 广告域名列表（示例）
+  adblock:
+    type: "domain"
+    format: "text"
+    path: "./lists/adblock_domains.txt"
+    interval: 86400
+    description: "广告域名"
+
+  # 本地域名列表（示例）
+  local_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/local_domains.txt"
+    interval: 0
+    description: "本地开发域名"
+
+  # IP CIDR 列表（用于 Final 规则判定国家代码）
+  china_ips:
+    type: "ipcidr"
+    format: "text"
+    path: "./lists/china_ips.txt"
+    interval: 86400
+    description: "国内 IP 地址段（|CIDR|country_code|，如 |39.156.0.0/16|CN|）"
+
+# 6) 规则（servers→main→final）
+rules:
+  # 服务器监听器规则（示例）
+  servers:
+    - main,cn_dns              # main 监听器 → 阿里 DNS
+    # - backup,global_dns      # 可选：备用监听器 → Google DNS
+
+  # 主规则组（命中会追加到对应列表的 原名.hit.txt；servers 组除外）
+  main:
+    - adblock,ad_hole         # 广告域名 → 黑洞
+    - china_domains,cn_dns    # 国内域名 → 阿里 DNS
+    - global_domains,global_dns # 国际域名 → Google DNS
+
+  # Final 规则（未被 main/servers 命中时触发）
+  final:
+    primary_upstream: "cn_dns"            # 第一次查询用国内 DNS
+    fallback_upstream: "global_dns"       # 若非 CN 用国际 DNS 再查
+    ipcidr: "china_ips"                   # 指定用于判定国家代码的 IP CIDR 列表
+    output: "./output/uncategorized.txt"  # 记录未分类域名（每行一个纯域名）

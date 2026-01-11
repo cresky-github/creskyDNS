@@ -1,0 +1,84 @@
+# creskyDNS 配置（完整版示例）
+# 配置顺序：log → listener → domain.cache → upstreams → lists → rules
+
+log:
+  enabled: true
+  path: "./logs/windspliving.log"
+  level: "info"         # 可选: trace, debug, info, warn, error
+  max_time: 3d
+  max_size: 10MB
+  max_backups: 5
+
+listener:
+  # 支持一个或多个监听地址
+  - address: "0.0.0.0:5353"
+    # 例如可加：
+    # protocol: udp          # 可选: udp, tcp（如实现支持则启用）
+
+# 原 cache → 现 domain.cache（名称变更，功能不变）
+# 输出文件每行严格使用 | 分隔：|cache ID|rule|domain|ttl|IP(上游返回的其它内容)|
+domain.cache:
+  size: 50000             # 缓存容量（条目数）
+  min_ttl: 30             # 最小 TTL（秒）
+  max_ttl: 3600           # 最大 TTL（秒）
+  output: "./output/domain.cache/main.cache.txt"
+  cold_start:
+    enabled: true
+    timeout: 5000         # 单次查询超时（毫秒）
+    parallel: 10          # 冷启动并发恢复数量
+
+upstreams:
+  # 上游示例：DoH（HTTPS DNS）
+  default_upstream:
+    type: doh
+    url: "https://dns.alidns.com/dns-query"
+  backup_upstream:
+    type: doh
+    url: "https://dns.google/dns-query"
+  # 也可增加 DoT / 普通 UDP 上游（视实现支持情况）：
+  # dot_cn:
+  #   type: dot
+  #   server: "dns.pub"
+  #   port: 853
+  # udp_local:
+  #   type: udp
+  #   server: "223.5.5.5"
+  #   port: 53
+
+lists:
+  # 域名列表（命中后用于选择上游，并会将命中的规则追踪写入原文件的 .hit.txt）
+  domain_cn:
+    type: domain
+    path: "./lists/domain.cn.txt"     # 行示例：example.cn 或 *.example.cn
+  domain_ads:
+    type: domain
+    path: "./lists/domain.ads.txt"    # 行示例：ads.example.com 或 *.ads.example.com
+
+  # Geo IP 段，用于 final 规则 primary/fallback 判定
+  ipcidr:
+    type: ipcidr
+    path: "./lists/ipcidr.geo.txt"    # 行格式：|CIDR|country_code| 例如：|8.8.8.0/24|US|
+
+rules:
+  # 分组规则：命中即使用对应 upstream，且会将命中的规则追加写入“原名.hit.txt”（servers 组除外）
+  group:
+    - name: cn
+      list: domain_cn
+      upstream: default_upstream
+    - name: ads
+      list: domain_ads
+      upstream: backup_upstream
+
+  # 最终规则（Final）：未命中任何 group 时触发
+  final:
+    primary_upstream: default_upstream
+    fallback_upstream: backup_upstream
+    # 当使用 primary 查询，若返回 IP 不属于 CN（基于 ipcidr 列表判定），则使用 fallback 再查询并以其结果为准；
+    # 若属于 CN，则直接采用 primary 结果。
+    # 命中的域名会写入 output 文件，每行一个纯域名，便于后续优化规则。
+    output: "./output/final.hit.txt"
+
+# 解析流程（三层）：
+# 1) rule.cache（内存）：每当规则命中，记录一条 |rule|upstream|。reload 时清空。
+# 2) domain.cache（持久文件）：查 |cache ID|rule|domain|ttl|IP(...)|，TTL 有效则直接返回；TTL=0 时从文件移除。
+# 3) rules：按 group → final 的逻辑解析，上游查询成功后回写 rule.cache 与 domain.cache。

@@ -1,0 +1,167 @@
+# DNS 转发器完整配置文件示例
+
+# 全局配置
+timeout_secs: 10  # 请求超时时间（秒）
+
+# 监听器配置 (实例名 -> 端口)
+# 支持多个DNS服务器实例，每个实例监听不同的端口
+listener:
+    main: 5353        # 主DNS服务器端口
+    backup: 5354      # 备用DNS服务器端口
+    ipv6: 5355        # IPv6专用端口
+
+# 缓存配置 (ID -> 配置)
+# 支持多个缓存实例，不同上游可以使用不同的缓存策略
+cache:
+    fast:             # 快速缓存，较小容量，较短TTL
+        size: 5000
+        min_ttl: 30
+        max_ttl: 1800
+    standard:         # 标准缓存，中等容量，中等TTL
+        size: 10000
+        min_ttl: 60
+        max_ttl: 3600
+    persistent:       # 持久缓存，大容量，长TTL
+        size: 50000
+        min_ttl: 300
+        max_ttl: 86400
+
+# 上游DNS服务器配置 (tag -> config)
+# 支持多种协议：UDP、TCP、DoH、DoT等
+upstreams:
+  # DoH (DNS over HTTPS) 服务器
+  alidns_doh:
+    addr: "https://dns.alidns.com/dns-query"
+    bootstrap: "udp://223.5.5.5:53"
+    cache: "standard"
+
+  google_doh:
+    addr: "https://dns.google/dns-query"
+    bootstrap: "udp://8.8.8.8:53"
+    cache: "standard"
+
+  cloudflare_doh:
+    addr: "https://cloudflare-dns.com/dns-query"
+    bootstrap: "udp://1.1.1.1:53"
+    cache: "fast"
+
+  quad9_doh:
+    addr: "https://dns.quad9.net/dns-query"
+    bootstrap: "udp://9.9.9.9:53"
+    cache: "standard"
+
+  # DoT (DNS over TLS) 服务器示例
+  # dot_example:
+  #   addr: "tls://dns.example.com:853"
+  #   bootstrap: "udp://8.8.8.8:53"
+  #   cache: "standard"
+
+  # UDP/TCP DNS 服务器
+  local_ali:
+    addr: "udp://223.5.5.5:53"
+    cache: "persistent"
+
+  local_114:
+    addr: "udp://114.114.114.114:53"
+    cache: "persistent"
+
+  local_dnspod:
+    addr: "udp://119.29.29.29:53"
+    cache: "persistent"
+
+  google_udp:
+    addr: "udp://8.8.8.8:53"
+    cache: "standard"
+
+  google_udp2:
+    addr: "udp://8.8.4.4:53"
+    cache: "standard"
+
+  cloudflare_udp:
+    addr: "udp://1.1.1.1:53"
+    cache: "fast"
+
+  cloudflare_udp2:
+    addr: "udp://1.0.0.1:53"
+    cache: "fast"
+
+  # TCP DNS 服务器示例
+  # google_tcp:
+  #   addr: "tcp://8.8.8.8:53"
+  #   cache: "standard"
+
+# 域名列表配置 (name -> config)
+# 支持本地文件和远程URL两种方式
+lists:
+  # 直连域名列表（需要快速访问的国内域名）
+  direct:
+    type: "domain"
+    format: "text"
+    path: "direct_domains.txt"
+    url: "https://cdn.jsdelivr.net/gh/example/direct-domains.txt"
+    interval: 86400  # 每天更新一次
+    domains:
+      - baidu.com
+      - qq.com
+      - aliyun.com
+      - taobao.com
+
+  # 代理域名列表（需要翻墙访问的国外域名）
+  proxy:
+    type: "domain"
+    format: "text"
+    path: "proxy_domains.txt"
+    url: "https://cdn.jsdelivr.net/gh/example/proxy-domains.txt"
+    interval: 43200  # 每12小时更新一次
+    domains:
+      - google.com
+      - facebook.com
+      - twitter.com
+      - youtube.com
+
+  # 广告域名列表（用于屏蔽广告）
+  adblock:
+    type: "domain"
+    format: "text"
+    path: "adblock_domains.txt"
+    url: "https://cdn.jsdelivr.net/gh/example/adblock.txt"
+    interval: 3600   # 每小时更新一次
+    domains:
+      - ads.example.com
+      - tracker.example.com
+      - analytics.example.com
+
+  # 自定义域名列表
+  custom:
+    type: "domain"
+    format: "text"
+    path: "custom_domains.txt"
+    # 如果不设置url，则只使用本地文件
+    domains:
+      - mycompany.com
+      - internal.local
+
+# 规则配置 (支持多个规则组)
+# 格式：域名列表名,上游名 (用逗号分隔，不需要双引号)
+rules:
+  # 国内服务规则
+  domestic:
+    - direct,alidns_doh       # 直连域名使用阿里DoH
+    - custom,local_ali        # 自定义域名使用阿里本地DNS
+    - adblock,local_114       # 广告域名使用114屏蔽
+
+  # 国际服务规则
+  international:
+    - proxy,google_doh        # 代理域名使用Google DoH
+    - adblock,cloudflare_udp  # 广告域名使用Cloudflare屏蔽
+
+  # 游戏加速规则
+  gaming:
+    - direct,local_dnspod     # 直连域名使用DNSPod加速
+    - custom,local_ali        # 自定义域名使用阿里DNS
+    - proxy,quad9_doh         # 代理域名使用Quad9
+
+  # 安全规则
+  security:
+    - adblock,local_114       # 广告域名使用114屏蔽
+    - direct,cloudflare_doh   # 直连域名使用Cloudflare

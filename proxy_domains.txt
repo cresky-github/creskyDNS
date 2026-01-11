@@ -1,0 +1,42 @@
+# 代理域名列表
+# 格式：每行一个域名，无前后缀
+
+twitter.com
+facebook.com
+instagram.com
+linkedin.com
+tiktok.com
+youtube.com
+vimeo.com
+dailymotion.com
+twitch.tv
+google.com
+bing.com
+duckduckgo.com
+github.com
+stackoverflow.com
+reddit.com
+medium.com
+quora.com
+bbc.com
+cnn.com
+nytimes.com
+wsj.com
+reuters.com
+apple.com
+microsoft.com
+amazon.com
+netflix.com
+docker.com
+kubernetes.io
+terraform.io
+ansible.com
+arxiv.org
+scholar.google.com
+researchgate.net
+
+# 其他国外服务
+dropbox.com
+slack.com
+discord.com
+zoom.us

@@ -1,0 +1,76 @@
+# DNS 转发器配置文件 (YAML 格式)
+
+# 监听器配置 (实例名 -> 端口)
+listener:
+    main: 5353
+    test: 5354
+
+# 缓存配置 (ID -> 配置)
+cache:
+    main:
+        size: 10000
+        min_ttl: 60
+        max_ttl: 86400
+    default:
+        size: 1000
+        min_ttl: 60
+        max_ttl: 86400
+
+# 上游DNS服务器配置 (tag -> config)
+upstreams:
+  ali:
+    addr: "https://dns.alidns.com/dns-query"
+    bootstrap: "udp://223.5.5.5:53"
+    cache: "main"
+  google:
+    addr: "https://dns.google/dns-query"
+    bootstrap: "udp://8.8.8.8:53"
+    cache: "default"
+  cloudflare:
+    addr: "https://cloudflare-dns.com/dns-query"
+    bootstrap: "udp://1.1.1.1:53"
+    cache: "default"
+  local_dns:
+    addr: "udp://223.5.5.5:53"
+    # UDP/TCP 不需要 bootstrap
+  direct_dns:
+    addr: "udp://8.8.8.8:53"
+    cache: "default"
+  proxy_dns:
+    addr: "udp://1.1.1.1:53"
+    cache: "default"
+
+# 域名列表配置 (name -> config)
+lists:
+  direct:
+    type: "domain"
+    path: "direct.txt"
+    url: "https://example.com/direct.txt"
+    interval: 86400
+  proxy:
+    type: "domain"
+    path: "proxy.txt"
+    url: "https://example.com/proxy.txt"
+    interval: 86400
+
+# 规则配置
+rules:
+    # 服务器实例规则：实例名,上游名 (可选，不写则完全按域名规则执行)
+    servers:
+        - main,local_dns
+        - test,cloudflare
+    # 域名规则：域名列表名,上游名
+    main:
+        - direct,ali
+        - proxy,google
+    upstream: "default_dns"
+
+# 请求超时时间（秒）
+timeout_secs: 5
+
+# 缓存配置 (id -> config)
+cache:
+  default:
+    size: 1000
+    min_ttl: 60
+    max_ttl: 86400
