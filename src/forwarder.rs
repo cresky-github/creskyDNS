@@ -194,7 +194,7 @@ impl DnsForwarder {
     }
 
     /// 处理未匹配任何规则的情况
-    async fn handle_no_match(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, Message)> {
+    async fn handle_no_match(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, String, Message)> {
         // 如果配置了 Final 规则，使用 Final 规则处理
         if let Some(final_rule) = &self.config.final_rule {
             debug!("域名 {} 未匹配任何规则，触发 Final 规则", domain);
@@ -209,7 +209,7 @@ impl DnsForwarder {
                 debug!("域名 {} 未匹配任何规则，使用默认上游 '{}'", domain, upstream_name);
                 let rule_name = format!("default:{}", upstream_name);
                 let response = self.forward_to_upstream_list(request, upstream).await?;
-                return Ok((upstream, rule_name, response));
+                return Ok((upstream, rule_name, String::new(), response));
             }
         }
         
@@ -218,7 +218,7 @@ impl DnsForwarder {
             debug!("域名 {} 未匹配任何规则，使用第一个可用上游 '{}'", domain, name);
             let rule_name = format!("fallback:{}", name);
             let response = self.forward_to_upstream_list(request, upstream).await?;
-            return Ok((upstream, rule_name, response));
+            return Ok((upstream, rule_name, String::new(), response));
         }
 
         // 如果没有任何上游，返回错误
@@ -764,7 +764,7 @@ impl DnsForwarder {
         domain: &str,
         request: &Message, 
         final_rule: &crate::config::FinalRule
-    ) -> Result<(&UpstreamList, String, Message)> {
+    ) -> Result<(&UpstreamList, String, String, Message)> {
         use std::io::Write;
         use std::fs::OpenOptions;
         
@@ -810,7 +810,8 @@ impl DnsForwarder {
         }
         
         let rule_name = format!("final:{}", upstream_name);
-        Ok((final_upstream, rule_name, final_response))
+        // Final 规则不记录匹配的域名，使用空字符串
+        Ok((final_upstream, rule_name, String::new(), final_response))
     }
 
     /// 从 DNS 响应中提取 IP 地址
