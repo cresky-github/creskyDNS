@@ -136,17 +136,17 @@ impl DnsForwarder {
         }
         
         // 3. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
-        let (upstream_list, rule_name, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
+        let (upstream_list, rule_name, matched_domain, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
             // Rule Cache 命中，直接使用缓存的上游
             let upstream_list = self.config.upstreams.get(&cached_upstream)
                 .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
             let response = self.forward_to_upstream_list(request, upstream_list).await?;
-            (upstream_list, format!("cached:{}", cached_upstream), cached_upstream, response)
+            (upstream_list, format!("cached:{}", cached_upstream), String::new(), cached_upstream, response)
         } else {
             // Rule Cache 未命中，执行规则匹配
-            let (upstream_list, rule_name, response) = self.match_domain(&qname, request, listener_name).await?;
+            let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
             let upstream_list_name = self.extract_upstream_name(&rule_name);
-            (upstream_list, rule_name, upstream_list_name, response)
+            (upstream_list, rule_name, matched_domain, upstream_list_name, response)
         };
         
         // 4. 写入 Rule Cache（原来的步骤5）
@@ -158,7 +158,9 @@ impl DnsForwarder {
         if let Some(cache) = &self.domain_cache {
             // 从响应中提取最小 TTL
             let ttl = self.extract_min_ttl(&response);
-            cache.insert(qname.clone(), rule_name.clone(), response.clone(), ttl);
+            // 使用匹配到的域名而非规则名称
+            let cache_rule = if matched_domain.is_empty() { rule_name.clone() } else { matched_domain.clone() };
+            cache.insert(qname.clone(), cache_rule, response.clone(), ttl);
         }
         
         // 记录响应结果
@@ -169,18 +171,19 @@ impl DnsForwarder {
     }
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
-    async fn match_domain(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, Message)> {
+    async fn match_domain(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, String, Message)> {
         // 首先尝试服务器规则匹配
         if let Some((server_upstream, rule_name)) = self.match_server_rule(listener_name)? {
             let response = self.forward_to_upstream_list(request, server_upstream).await?;
-            return Ok((server_upstream, rule_name, response));
+            // servers 规则不记录匹配的域名，使用空字符串
+            return Ok((server_upstream, rule_name, String::new(), response));
         }
 
         // 如果没有服务器规则，则按域名规则匹配
         match self.match_domain_rules(domain) {
-            Ok((upstream, rule_name)) => {
+            Ok((upstream, rule_name, matched_domain)) => {
                 let response = self.forward_to_upstream_list(request, upstream).await?;
-                Ok((upstream, rule_name, response))
+                Ok((upstream, rule_name, matched_domain, response))
             }
             Err(e) if e.to_string() == "NO_MATCH" => {
                 // 未匹配任何规则，尝试 Final 规则或默认上游
@@ -270,7 +273,8 @@ impl DnsForwarder {
     /// 4. 取域名深度最大的规则
     /// 5. 如果深度相同，取group内最后一个匹配的规则
     /// 6. 一旦某个规则组有匹配，立即返回，不再检查后续规则组
-    fn match_domain_rules(&self, domain: &str) -> Result<(&UpstreamList, String)> {
+    /// 返回: (upstream, rule_name, matched_domain)
+    fn match_domain_rules(&self, domain: &str) -> Result<(&UpstreamList, String, String)> {
         // 按 YAML 顺序遍历所有规则组（IndexMap 保证顺序）
         for (group_name, rules) in &self.config.rules {
             // 跳过 'final' 规则组，它在最后单独处理
@@ -279,12 +283,12 @@ impl DnsForwarder {
             }
             
             // 在每个规则组内找到最优匹配
-            if let Some(upstream_list) = self.find_best_match_in_group(domain, rules) {
-                debug!("域名 {} 在规则组 '{}' 中匹配到上游 '{}'", domain, group_name, upstream_list);
+            if let Some((upstream_list, matched_domain)) = self.find_best_match_in_group(domain, rules) {
+                debug!("域名 {} 在规则组 '{}' 中匹配到上游 '{}', 匹配域名: {}", domain, group_name, upstream_list, matched_domain);
                 let upstream = self.config.upstreams.get(&upstream_list)
                     .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", upstream_list))?;
                 let rule_name = format!("{}:{}", group_name, upstream_list);
-                return Ok((upstream, rule_name));
+                return Ok((upstream, rule_name, matched_domain));
             }
         }
 
@@ -294,18 +298,19 @@ impl DnsForwarder {
 
     /// 在单个group内找到最优匹配
     /// 同时评估所有规则，按深度降序、rule_index降序排序，取第一个匹配
+    /// 返回: (upstream_list, matched_domain)
     fn find_best_match_in_group(
         &self,
         domain: &str,
         rules: &[String],
-    ) -> Option<String> {
-        let mut matches: Vec<(usize, usize, String)> = Vec::new(); // (depth, rule_index, upstream_list)
+    ) -> Option<(String, String)> {
+        let mut matches: Vec<(usize, usize, String, String)> = Vec::new(); // (depth, rule_index, upstream_list, matched_domain)
 
         // 同时评估所有规则
         for (rule_index, rule_str) in rules.iter().enumerate() {
             if let Some((domain_list, upstream_list)) = self.parse_rule_string(rule_str) {
-                if let Some(depth) = self.get_match_depth(domain, &domain_list) {
-                    matches.push((depth, rule_index, upstream_list));
+                if let Some((depth, matched_domain)) = self.get_match_depth(domain, &domain_list) {
+                    matches.push((depth, rule_index, upstream_list, matched_domain));
                 }
             }
         }
@@ -323,8 +328,8 @@ impl DnsForwarder {
             }
         });
 
-        // 返回最优匹配的上游列表名
-        matches.first().map(|(_, _, upstream_list)| upstream_list.clone())
+        // 返回最优匹配的上游列表名和匹配的域名
+        matches.first().map(|(_, _, upstream_list, matched_domain)| (upstream_list.clone(), matched_domain.clone()))
     }
 
     /// 解析规则字符串 "domain_list,upstream_list"
@@ -338,7 +343,8 @@ impl DnsForwarder {
     }
 
     /// 获取域名与规则的匹配深度
-    fn get_match_depth(&self, domain: &str, domain_list_name: &str) -> Option<usize> {
+    /// 返回: (depth, matched_domain)
+    fn get_match_depth(&self, domain: &str, domain_list_name: &str) -> Option<(usize, String)> {
         let domain_list = self.config.lists.get(domain_list_name)?;
         let domain_parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
@@ -351,7 +357,7 @@ impl DnsForwarder {
             };
 
             if domain_list.domains.contains(&check_domain) {
-                return Some(depth);
+                return Some((depth, check_domain));
             }
         }
 
