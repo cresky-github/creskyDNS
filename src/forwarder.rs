@@ -56,9 +56,9 @@ impl DnsForwarder {
     pub async fn forward_with_listener(
         &self,
         request: &Message,
-        _listener_name: &str,
+        listener_name: &str,
     ) -> Result<Message> {
-        self.process_request(request).await
+        self.process_request(request, Some(listener_name)).await
     }
 
     /// 处理UDP请求
@@ -69,7 +69,7 @@ impl DnsForwarder {
         data: &[u8],
     ) -> Result<()> {
         let request = crate::dns::parse_dns(data)?;
-        let response = self.process_request(&request).await?;
+        let response = self.process_request(&request, None).await?;
         let response_data = crate::dns::encode_dns(&response)?;
         socket.send_to(&response_data, addr).await?;
         Ok(())
@@ -86,7 +86,7 @@ impl DnsForwarder {
         socket.read_exact(&mut msg_buf).await?;
         
         let request = crate::dns::parse_dns(&msg_buf)?;
-        let response = self.process_request(&request).await?;
+        let response = self.process_request(&request, None).await?;
         let response_data = crate::dns::encode_dns(&response)?;
         
         // 发送TCP DNS消息（前2字节是长度）
@@ -98,7 +98,7 @@ impl DnsForwarder {
     }
 
     /// 处理DNS请求
-    async fn process_request(&self, request: &Message) -> Result<Message> {
+    async fn process_request(&self, request: &Message, listener_name: Option<&str>) -> Result<Message> {
         let qname = crate::dns::get_qname(request)
             .ok_or_else(|| anyhow::anyhow!("无法获取查询名称"))?;
         
@@ -132,7 +132,7 @@ impl DnsForwarder {
             (upstream_list, format!("cached:{}", cached_upstream), cached_upstream, response)
         } else {
             // Rule Cache 未命中，执行规则匹配
-            let (upstream_list, rule_name, response) = self.match_domain(&qname, request).await?;
+            let (upstream_list, rule_name, response) = self.match_domain(&qname, request, listener_name).await?;
             let upstream_list_name = self.extract_upstream_name(&rule_name);
             (upstream_list, rule_name, upstream_list_name, response)
         };
@@ -153,9 +153,9 @@ impl DnsForwarder {
     }
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
-    async fn match_domain(&self, domain: &str, request: &Message) -> Result<(&UpstreamList, String, Message)> {
+    async fn match_domain(&self, domain: &str, request: &Message, listener_name: Option<&str>) -> Result<(&UpstreamList, String, Message)> {
         // 首先尝试服务器规则匹配
-        if let Some((server_upstream, rule_name)) = self.match_server_rule(domain)? {
+        if let Some((server_upstream, rule_name)) = self.match_server_rule(listener_name)? {
             let response = self.forward_to_upstream_list(request, server_upstream).await?;
             return Ok((server_upstream, rule_name, response));
         }
@@ -206,10 +206,43 @@ impl DnsForwarder {
         anyhow::bail!("域名 {} 未匹配到任何规则，且没有可用的默认上游", domain)
     }
 
-    /// 匹配服务器规则（按实例）
-    fn match_server_rule(&self, _domain: &str) -> Result<Option<(&UpstreamList, String)>> {
-        // 这里可以根据服务器实例进行匹配
-        // 暂时返回None，交给域名规则处理
+    /// 匹配服务器规则（按监听器实例）
+    fn match_server_rule(&self, listener_name: Option<&str>) -> Result<Option<(&UpstreamList, String)>> {
+        // 如果没有 listener_name 或者没有配置 servers 规则，返回 None
+        let listener_name = match listener_name {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+        
+        // 获取 servers 规则组
+        let servers_rules = match self.config.rules.get("servers") {
+            Some(rules) => rules,
+            None => return Ok(None),
+        };
+        
+        // 遍历 servers 规则，查找匹配的监听器
+        for rule in servers_rules {
+            // 规则格式: "listener_name,upstream_name"
+            let parts: Vec<&str> = rule.split(',').map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                warn!("无效的 servers 规则格式: '{}', 应为 'listener_name,upstream_name'", rule);
+                continue;
+            }
+            
+            let rule_listener = parts[0];
+            let upstream_name = parts[1];
+            
+            // 匹配监听器名称
+            if rule_listener == listener_name {
+                // 找到上游配置
+                let upstream = self.config.upstreams.get(upstream_name)
+                    .ok_or_else(|| anyhow::anyhow!("servers 规则中的上游 '{}' 未找到", upstream_name))?;
+                let rule_name = format!("servers:{}", upstream_name);
+                debug!("监听器 '{}' 匹配到 servers 规则，使用上游 '{}'", listener_name, upstream_name);
+                return Ok(Some((upstream, rule_name)));
+            }
+        }
+        
         Ok(None)
     }
 
