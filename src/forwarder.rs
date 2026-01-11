@@ -626,10 +626,14 @@ impl DnsForwarder {
         use base64::Engine;
         let dns_query = URL_SAFE_NO_PAD.encode(&request_data);
 
-        // 构建 DoH 请求
+        // 构建 DoH 请求，启用系统代理支持
+        // 会自动读取 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 等环境变量
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .use_rustls_tls()  // 使用 rustls 而不是 native-tls
             .build()?;
+
+        debug!("DoH 向 {} 发送查询（支持系统代理）", upstream_addr);
 
         let response = client
             .get(&url)
