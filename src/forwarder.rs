@@ -229,14 +229,26 @@ impl DnsForwarder {
     fn match_server_rule(&self, listener_name: Option<&str>) -> Result<Option<(&UpstreamList, String)>> {
         // 如果没有 listener_name 或者没有配置 servers 规则，返回 None
         let listener_name = match listener_name {
-            Some(name) => name,
-            None => return Ok(None),
+            Some(name) => {
+                debug!("检查监听器 '{}' 的 servers 规则", name);
+                name
+            },
+            None => {
+                debug!("未提供 listener_name，跳过 servers 规则匹配");
+                return Ok(None);
+            }
         };
         
         // 获取 servers 规则组
         let servers_rules = match self.config.rules.get("servers") {
-            Some(rules) => rules,
-            None => return Ok(None),
+            Some(rules) => {
+                debug!("找到 servers 规则组，共 {} 条规则", rules.len());
+                rules
+            },
+            None => {
+                debug!("配置中没有 servers 规则组");
+                return Ok(None);
+            }
         };
         
         // 遍历 servers 规则，查找匹配的监听器
@@ -251,17 +263,20 @@ impl DnsForwarder {
             let rule_listener = parts[0];
             let upstream_name = parts[1];
             
+            debug!("检查规则 '{}' - 规则监听器: '{}', 当前监听器: '{}'", rule, rule_listener, listener_name);
+            
             // 匹配监听器名称
             if rule_listener == listener_name {
                 // 找到上游配置
                 let upstream = self.config.upstreams.get(upstream_name)
                     .ok_or_else(|| anyhow::anyhow!("servers 规则中的上游 '{}' 未找到", upstream_name))?;
                 let rule_name = format!("servers:{}", upstream_name);
-                debug!("监听器 '{}' 匹配到 servers 规则，使用上游 '{}'", listener_name, upstream_name);
+                info!("✓ 监听器 '{}' 匹配到 servers 规则，使用上游 '{}'", listener_name, upstream_name);
                 return Ok(Some((upstream, rule_name)));
             }
         }
         
+        debug!("监听器 '{}' 未匹配到任何 servers 规则", listener_name);
         Ok(None)
     }
 
