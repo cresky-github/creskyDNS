@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{UdpSocket, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, warn};
+use tracing::{debug, warn, info};
 use base64;
 use std::sync::Arc;
 use rustls::ClientConfig;
@@ -109,6 +109,11 @@ impl DnsForwarder {
         let qname = crate::dns::get_qname(request)
             .ok_or_else(|| anyhow::anyhow!("无法获取查询名称"))?;
         
+        // 记录查询请求
+        let query_type = request.queries().first().map(|q| format!("{:?}", q.query_type())).unwrap_or_else(|| "UNKNOWN".to_string());
+        info!("查询: {} ({}){}", qname, query_type, 
+              listener_name.map(|n| format!(" [监听器: {}]", n)).unwrap_or_default());
+        
         // 1. 查询 Rule Cache（最高优先级）
         let upstream_name = if let Some(rule_cache) = &self.rule_cache {
             if let Some(cached_upstream) = rule_cache.get(&qname) {
@@ -155,6 +160,10 @@ impl DnsForwarder {
             let ttl = self.extract_min_ttl(&response);
             cache.insert(qname.clone(), rule_name, response.clone(), ttl);
         }
+        
+        // 记录响应结果
+        let answer_count = response.answers().len();
+        info!("响应: {} -> {} [规则: {}, 答案数: {}]", qname, upstream_list_name, rule_name, answer_count);
         
         Ok(response)
     }
