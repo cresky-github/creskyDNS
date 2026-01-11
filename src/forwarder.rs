@@ -43,19 +43,19 @@ impl DnsForwarder {
             return Ok((addr.to_string(), 443));
         }
         
-        // 移除协议前缀
-        let addr = addr
-            .strip_prefix("udp://").unwrap_or(addr)
-            .strip_prefix("tcp://").unwrap_or(addr)
-            .strip_prefix("tls://").unwrap_or(addr)
-            .strip_prefix("doq://").unwrap_or(addr)
-            .strip_prefix("quic://").unwrap_or(addr);
+        // 移除协议前缀（链式移除）
+        let mut cleaned = addr;
+        cleaned = cleaned.strip_prefix("udp://").unwrap_or(cleaned);
+        cleaned = cleaned.strip_prefix("tcp://").unwrap_or(cleaned);
+        cleaned = cleaned.strip_prefix("tls://").unwrap_or(cleaned);
+        cleaned = cleaned.strip_prefix("doq://").unwrap_or(cleaned);
+        cleaned = cleaned.strip_prefix("quic://").unwrap_or(cleaned);
         
-        if let Some((host, port_str)) = addr.rsplit_once(':') {
+        if let Some((host, port_str)) = cleaned.rsplit_once(':') {
             let port = port_str.parse::<u16>()?;
             Ok((host.to_string(), port))
         } else {
-            Ok((addr.to_string(), 53))
+            Ok((cleaned.to_string(), 53))
         }
     }
 
