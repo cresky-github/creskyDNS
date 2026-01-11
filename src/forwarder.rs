@@ -159,17 +159,23 @@ impl DnsForwarder {
         
         // 4. 写入 Rule Cache
         // Rule Cache 存储: qname -> upstream_name（上游名称，不是匹配域名）
+        // 注意：servers 规则不参与缓存
         if let Some(rule_cache) = &self.rule_cache {
-            rule_cache.insert(qname.clone(), upstream_list_name.clone());
+            if !rule_name.starts_with("servers:") {
+                rule_cache.insert(qname.clone(), upstream_list_name.clone());
+            }
         }
         
         // 5. 写入 Domain Cache
+        // 注意：servers 规则不参与缓存
         if let Some(cache) = &self.domain_cache {
-            // 从响应中提取最小 TTL
-            let ttl = self.extract_min_ttl(&response);
-            // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
-            let cache_rule = if matched_domain.is_empty() { rule_name.clone() } else { matched_domain.clone() };
-            cache.insert(qname.clone(), cache_rule, response.clone(), ttl);
+            if !rule_name.starts_with("servers:") {
+                // 从响应中提取最小 TTL
+                let ttl = self.extract_min_ttl(&response);
+                // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
+                let cache_rule = if matched_domain.is_empty() { rule_name.clone() } else { matched_domain.clone() };
+                cache.insert(qname.clone(), cache_rule, response.clone(), ttl);
+            }
         }
         
         // 记录响应结果
