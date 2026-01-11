@@ -83,6 +83,7 @@ pub struct Config {
     /// 规则配置 (按 YAML 顺序保留，使用 IndexMap 确保顺序)
     pub rules: IndexMap<String, Vec<String>>,
     /// Final 规则配置（可选）
+    #[serde(rename = "final")]
     pub final_rule: Option<FinalRule>,
     /// 请求超时时间（秒）
     #[serde(default = "default_timeout")]
