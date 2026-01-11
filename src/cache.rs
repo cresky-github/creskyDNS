@@ -7,8 +7,8 @@ use tracing::{debug, info};
 /// DNS 缓存记录
 #[derive(Clone, Debug)]
 pub struct CachedDnsRecord {
-    /// 匹配的规则名称
-    pub rule: String,
+    /// 匹配到的域名（用于链接到 rule.cache）
+    pub matched_domain: String,
     /// 查询的域名
     pub domain: String,
     /// 过期时间点
@@ -89,7 +89,7 @@ impl DomainCache {
     }
 
     /// 插入缓存
-    pub fn insert(&self, domain: String, rule: String, message: Message, ttl: u64) {
+    pub fn insert(&self, domain: String, matched_domain: String, message: Message, ttl: u64) {
         let mut cache = self.cache.write().unwrap();
 
         // 检查缓存大小限制，使用 LRU 淘汰策略
@@ -109,7 +109,7 @@ impl DomainCache {
 
         let expire_at = Instant::now() + Duration::from_secs(adjusted_ttl);
         let record = CachedDnsRecord {
-            rule: rule.clone(),
+            matched_domain: matched_domain.clone(),
             domain: domain.clone(),
             expire_at,
             message,
@@ -117,8 +117,8 @@ impl DomainCache {
 
         cache.insert(domain.clone(), record);
         debug!(
-            "Domain Cache '{}': 写入域名 {} (规则: {}, TTL: {}s)",
-            self.cache_id, domain, rule, adjusted_ttl
+            "Domain Cache '{}': 写入域名 {} (匹配域名: {}, TTL: {}s)",
+            self.cache_id, domain, matched_domain, adjusted_ttl
         );
     }
 
@@ -200,7 +200,7 @@ pub struct CacheStats {
 }
 
 /// Rule Cache（规则缓存）
-/// 格式：|rule|upstream| (domain -> upstream_name)
+/// 格式：|domain|upstream| (domain -> upstream_name)
 /// 用于加速 DNS 解析，避免重复的规则匹配
 #[derive(Clone)]
 pub struct RuleCache {
