@@ -114,7 +114,20 @@ impl DnsForwarder {
         info!("查询: {} ({}){}", qname, query_type, 
               listener_name.map(|n| format!(" [监听器: {}]", n)).unwrap_or_default());
         
-        // 1. 查询 Rule Cache（最高优先级）
+        // 1. 优先检查 servers 规则（不使用缓存，直接转发）
+        if let Some(listener) = listener_name {
+            if self.config.rules.contains_key("servers") {
+                if let Some((server_upstream, rule_name)) = self.match_server_rule(Some(listener))? {
+                    let response = self.forward_to_upstream_list(request, server_upstream).await?;
+                    let upstream_name = self.extract_upstream_name(&rule_name);
+                    let answer_count = response.answers().len();
+                    info!("响应: {} -> {} [规则: {}, 答案数: {}]", qname, upstream_name, rule_name, answer_count);
+                    return Ok(response);
+                }
+            }
+        }
+        
+        // 2. 查询 Rule Cache（第二优先级）
         let upstream_name = if let Some(rule_cache) = &self.rule_cache {
             if let Some(cached_upstream) = rule_cache.get(&qname) {
                 Some(cached_upstream)
@@ -125,7 +138,7 @@ impl DnsForwarder {
             None
         };
         
-        // 2. 查询 Domain Cache（第二优先级）
+        // 3. 查询 Domain Cache（第三优先级）
         if upstream_name.is_none() {
             if let Some(cache) = &self.domain_cache {
                 if let Some(cached_response) = cache.get(&qname) {
@@ -135,7 +148,7 @@ impl DnsForwarder {
             }
         }
         
-        // 3. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
+        // 4. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
         let (_upstream_list, rule_name, matched_domain, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
             // Rule Cache 命中，直接使用缓存的上游
             let upstream_list = self.config.upstreams.get(&cached_upstream)
