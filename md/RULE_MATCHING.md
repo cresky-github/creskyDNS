@@ -57,10 +57,12 @@ group2 → 检查是否有匹配
    - 深度大的优先（更具体的匹配）
    
    例如对于 `api.service.example.com`：
-   - `example.com` 的深度 = 1
-   - `service.example.com` 的深度 = 2
-   - `api.service.example.com` 的深度 = 3
-   - **选择深度 3 的规则**
+   - `.` 的深度 = 0
+   - `com` 的深度 = 1
+   - `example.com` 的深度 = 2
+   - `service.example.com` 的深度 = 3
+   - `api.service.example.com` 的深度 = 4
+   - **选择深度 4 的规则**（最精确匹配）
 
 **2. 规则顺序 (Rule Index)** - 次要
    - 当多个规则深度相同时
@@ -70,8 +72,8 @@ group2 → 检查是否有匹配
    ```yaml
    rules:
      group:
-       - list1,upstream1  # index=0, depth=2
-       - list2,upstream2  # index=1, depth=2 ← 选中！
+       - list1,upstream1  # index=0, depth=2 (例如匹配 google.com)
+       - list2,upstream2  # index=1, depth=2 (例如匹配 baidu.com) ← 选中！
    ```
 
 #### 第四步：返回结果
@@ -149,12 +151,12 @@ rules:
 - 规则0 `direct,ali_doh`：
   - `baidu.com` ✗ 不匹配
   - `qq.com` ✗ 不匹配  
-  - `aliyun.com` ✓ 匹配，深度=1
+  - `aliyun.com` ✓ 匹配，深度=2
   
 - 规则1 `custom,cloudflare_dot`：
   - `internal.company.com` ✗ 不匹配
 
-**组内结果**：选择规则0 (aliyun.com, 深度=1)
+**组内结果**：选择规则0 (aliyun.com, 深度=2)
 
 **返回**：`ali_doh` (https://dns.alidns.com/dns-query)
 
@@ -173,8 +175,8 @@ rules:
 ```
 
 **规则组 `domestic` 的评估**：
-- 规则0：深度=1，index=0
-- 规则1：深度=1，index=1 ← **选中**（深度相同，后者优先）
+- 规则0：深度=3，index=0
+- 规则1：深度=3，index=1 ← **选中**（深度相同，后者优先）
 
 **返回**：`cloudflare_dot` (tls://1.1.1.1:853)
 
@@ -192,7 +194,7 @@ rules:
 
 2. **规则组 `international`** (第2个)：
    - 规则0 `proxy,google_doq`：
-     - `google.com` ✓ 匹配，深度=1
+     - `google.com` ✓ 匹配，深度=2
 
 **返回**：`google_doq` (quic://dns.google:784)
 

@@ -39,6 +39,7 @@
 |------|------|
 | [README.md](README.md) | 项目主文档 |
 | [RULE_MATCHING.md](RULE_MATCHING.md) | 规则匹配说明 |
+| [DOMAIN_DEPTH_DEFINITION.md](DOMAIN_DEPTH_DEFINITION.md) | 域名深度定义规范 ⭐ |
 
 ---
 

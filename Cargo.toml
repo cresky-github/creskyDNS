@@ -12,7 +12,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 indexmap = { version = "2.0", features = ["serde"] }
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
+chrono = "0.4"
 base64 = "0.22"
 rustls = { version = "0.21", features = ["dangerous_configuration"] }
 tokio-rustls = "0.24"

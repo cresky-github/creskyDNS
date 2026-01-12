@@ -50,6 +50,54 @@ pub struct UpstreamList {
     pub proxy: Option<String>,
 }
 
+/// 日志配置
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogConfig {
+    /// 是否启用日志
+    #[serde(default = "default_log_enabled")]
+    pub enabled: bool,
+    /// 日志文件路径
+    #[serde(default = "default_log_path")]
+    pub path: String,
+    /// 日志级别: trace/debug/info/warn/error
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// 轮转时间（如 7d, 24h, 30m）
+    #[serde(default = "default_log_max_time")]
+    pub max_time: String,
+    /// 单文件最大大小（如 100MB, 1GB）
+    #[serde(default = "default_log_max_size")]
+    pub max_size: String,
+    /// 保留备份数量
+    #[serde(default = "default_log_max_backups")]
+    pub max_backups: usize,
+    /// 日志格式模板
+    #[serde(default = "default_log_format")]
+    pub format: String,
+}
+
+fn default_log_enabled() -> bool { true }
+fn default_log_path() -> String { "./logs/creskyDNS.log".to_string() }
+fn default_log_level() -> String { "info".to_string() }
+fn default_log_max_time() -> String { "7d".to_string() }
+fn default_log_max_size() -> String { "100MB".to_string() }
+fn default_log_max_backups() -> usize { 10 }
+fn default_log_format() -> String { "|{date}|{time}|{level}|{process}|{module}|{message}|".to_string() }
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_log_enabled(),
+            path: default_log_path(),
+            level: default_log_level(),
+            max_time: default_log_max_time(),
+            max_size: default_log_max_size(),
+            max_backups: default_log_max_backups(),
+            format: default_log_format(),
+        }
+    }
+}
+
 /// 缓存配置
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CacheConfig {
@@ -77,6 +125,9 @@ pub struct FinalRule {
 /// DNS 转发器配置
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    /// 日志配置
+    #[serde(default)]
+    pub log: LogConfig,
     /// 监听器配置 (实例名 -> 端口)
     pub listener: HashMap<String, u16>,
     /// 域名列表配置 (name -> config)
@@ -148,6 +199,7 @@ impl Default for Config {
         });
 
         Self {
+            log: LogConfig::default(),
             listener,
             lists,
             upstreams,

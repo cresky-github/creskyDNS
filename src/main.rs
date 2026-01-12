@@ -13,6 +13,7 @@ mod config;
 mod forwarder;
 mod dns;
 mod cache;
+mod log;
 
 use config::{Config, DomainListReloadState};
 use forwarder::DnsForwarder;
@@ -20,13 +21,12 @@ use cache::{DomainCache, RuleCache};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
     // 加载配置
     let mut config = load_config()?;
+    
+    // 初始化日志系统
+    log::init_logging(&config.log)?;
+    
     info!("DNS 转发器启动");
     info!("请求超时: {}s", config.timeout_secs);
     

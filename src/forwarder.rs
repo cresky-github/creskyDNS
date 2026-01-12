@@ -318,13 +318,15 @@ impl DnsForwarder {
     }
 
     /// 匹配域名规则（按规则组顺序）
+    /// 
     /// 规则说明：
     /// 1. 按 YAML 配置文件中定义的顺序遍历规则组
     /// 2. 在每个规则组内，同时匹配所有list
     /// 3. 按domain suffix方式匹配
-    /// 4. 取域名深度最大的规则
+    /// 4. 取域名深度最大的规则（深度定义：. = 0, com = 1, google.com = 2, www.google.com = 3）
     /// 5. 如果深度相同，取group内最后一个匹配的规则
     /// 6. 一旦某个规则组有匹配，立即返回，不再检查后续规则组
+    /// 
     /// 返回: (upstream, rule_name, matched_domain)
     fn match_domain_rules(&self, domain: &str) -> Result<(&UpstreamList, String, String)> {
         // 按 YAML 顺序遍历所有规则组（IndexMap 保证顺序）
@@ -349,8 +351,16 @@ impl DnsForwarder {
     }
 
     /// 在单个group内找到最优匹配
+    /// 
     /// 同时评估所有规则，按深度降序、rule_index降序排序，取第一个匹配
-    /// 返回: (upstream_list, matched_domain)
+    /// 
+    /// 深度定义（越大越精确）：
+    /// - 深度0: `.` (根域名)
+    /// - 深度1: `com` (顶级域名)
+    /// - 深度2: `google.com` (二级域名)  
+    /// - 深度3: `www.google.com` (三级域名)
+    /// 
+    /// 返回: Some((upstream_list, matched_domain)) 或 None
     fn find_best_match_in_group(
         &self,
         domain: &str,
@@ -395,16 +405,38 @@ impl DnsForwarder {
     }
 
     /// 获取域名与规则的匹配深度
-    /// 返回: (depth, matched_domain)
+    /// 
+    /// 域名深度定义：
+    /// - 深度0: `.` (根域名)
+    /// - 深度1: `com` (顶级域名)
+    /// - 深度2: `google.com` (二级域名)
+    /// - 深度3: `www.google.com` (三级域名)
+    /// - 以此类推
+    /// 
+    /// 深度越大表示匹配越精确，优先级越高
+    /// 
+    /// 返回: Some((depth, matched_domain)) 或 None
+    /// 
+    /// 示例：
+    /// ```
+    /// // 查询 www.google.com，规则列表包含 google.com
+    /// get_match_depth("www.google.com", "list") → Some((2, "google.com"))
+    /// 
+    /// // 查询 api.google.com，规则列表包含 google.com 和 api.google.com
+    /// get_match_depth("api.google.com", "list") → Some((3, "api.google.com"))
+    /// ```
     fn get_match_depth(&self, domain: &str, domain_list_name: &str) -> Option<(usize, String)> {
         let domain_list = self.config.lists.get(domain_list_name)?;
         let domain_parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
-        // 检查各级域名是否匹配
+        // 检查各级域名是否匹配（从最深到最浅）
+        // 优先匹配深度大的（更精确的）域名
         for depth in (0..=domain_parts.len()).rev() {
             let check_domain = if depth == 0 {
-                ".".to_string()
+                ".".to_string() // 根域名，匹配所有
             } else {
+                // 取后 depth 个部分组成域名
+                // 例如: ["www", "google", "com"], depth=2 → "google.com"
                 domain_parts[domain_parts.len() - depth..].join(".")
             };
 

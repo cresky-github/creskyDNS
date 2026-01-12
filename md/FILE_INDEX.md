@@ -58,7 +58,8 @@
 ### 📝 其他文档（参考）
 17. [README.md](README.md) - 项目主文档
 18. [RULE_MATCHING.md](RULE_MATCHING.md) - 规则匹配说明
-19. [USAGE.md](USAGE.md) - 使用说明
+19. [DOMAIN_DEPTH_DEFINITION.md](DOMAIN_DEPTH_DEFINITION.md) - 域名深度定义规范 ⭐
+20. [USAGE.md](USAGE.md) - 使用说明
 
 ---
 
@@ -106,6 +107,7 @@
 | 问题 | 查看文档 |
 |------|---------|
 | 我如何开始？ | [QUICK_START.md](QUICK_START.md) |
+| 域名深度是如何定义的？ | [DOMAIN_DEPTH_DEFINITION.md](DOMAIN_DEPTH_DEFINITION.md) ⭐ |
 | 文件格式应该怎样？ | [DOMAIN_LIST_QUICK_REF.md](DOMAIN_LIST_QUICK_REF.md) |
 | 详细的规范是什么？ | [DOMAIN_LIST_FORMAT.md](DOMAIN_LIST_FORMAT.md) |
 | 我的文件格式对吗？ | [validate_domain_lists.py](validate_domain_lists.py) |
@@ -126,8 +128,8 @@
 | 导航文档 | 3 |
 | 工具脚本 | 1 |
 | 配置文件 | 7 |
-| 其他文档 | 3 |
-| **总计** | **21** |
+| 其他文档 | 4 |
+| **总计** | **22** |
 
 ---
 
@@ -200,6 +202,7 @@ cargo run
 | 我想... | 链接 |
 |--------|------|
 | 快速上手 | [QUICK_START.md](QUICK_START.md) |
+| 了解域名深度定义 | [DOMAIN_DEPTH_DEFINITION.md](DOMAIN_DEPTH_DEFINITION.md) ⭐ |
 | 查询dos/don'ts | [DOMAIN_LIST_QUICK_REF.md](DOMAIN_LIST_QUICK_REF.md) |
 | 学习完整规范 | [DOMAIN_LIST_FORMAT.md](DOMAIN_LIST_FORMAT.md) |
 | 了解所有变更 | [DOMAIN_LIST_UPDATE.md](DOMAIN_LIST_UPDATE.md) |
