@@ -981,7 +981,7 @@ impl DnsForwarder {
             let parts: Vec<&str> = cidr_entry.split('|').collect();
             if parts.len() >= 3 {
                 let cidr = parts[1].trim();
-                let country = parts[2].trim();
+                let country = parts[2].trim().to_uppercase(); // 转换为大写进行比较
                 
                 // 只检查 CN 的 CIDR
                 if country == "CN" {
