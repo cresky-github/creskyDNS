@@ -215,6 +215,7 @@ impl Default for Config {
             url: None,
             domains: vec!["google.com".to_string(), "baidu.com".to_string()],
             interval: 0,
+            hit_path: None,
         });
         lists.insert("proxy".to_string(), DomainList {
             r#type: "proxy".to_string(),
@@ -223,6 +224,7 @@ impl Default for Config {
             url: None,
             domains: vec!["twitter.com".to_string(), "facebook.com".to_string()],
             interval: 0,
+            hit_path: None,
         });
 
         let mut upstreams = HashMap::new();
