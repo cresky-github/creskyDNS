@@ -1,0 +1,57 @@
+# 监听器端口验证测试配置
+
+log:
+  enabled: true
+  path: "./logs/test.log"
+  level: "info"
+
+# 测试场景 1：正确配置
+listener:
+  rule: 5353            # ✓ 正确：rule 使用 1025-65535
+  direct: 5310          # ✓ 正确：其它键使用 1025-65535
+  proxy: 5320           # ✓ 正确：其它键使用 1025-65535
+
+# 测试场景 2：rule 使用 53 端口（正确）
+# listener:
+#   rule: 53            # ✓ 正确：rule 可以使用 53
+#   direct: 5310        # ✓ 正确
+#   proxy: 5320         # ✓ 正确
+
+# 测试场景 3：rule 使用无效端口（错误）
+# listener:
+#   rule: 1024          # ✗ 错误：rule 只能用 53 或 1025-65535
+#   direct: 5310        # ✓ 正确
+
+# 测试场景 4：其它键使用 53（错误）
+# listener:
+#   rule: 5353          # ✓ 正确
+#   direct: 53          # ✗ 错误：只有 rule 能用 53
+#   proxy: 5320         # ✓ 正确
+
+# 测试场景 5：使用系统保留端口（错误）
+# listener:
+#   rule: 5353          # ✓ 正确
+#   direct: 80          # ✗ 错误：0-1024 是系统保留端口
+#   proxy: 443          # ✗ 错误：0-1024 是系统保留端口
+
+cache:
+  main:
+    size: 1000
+
+upstreams:
+  default:
+    addresses:
+      - "udp://8.8.8.8:53"
+
+lists:
+  test:
+    type: "direct"
+    format: "text"
+    domains:
+      - "example.com"
+
+# 测试场景 6：在 rules 中引用 rule（会输出 warn）
+rules:
+  main:
+    - test,default
+    # - rule,default  # 如果取消注释，会输出 warn 日志

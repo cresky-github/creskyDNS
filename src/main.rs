@@ -30,6 +30,9 @@ async fn main() -> Result<()> {
     info!("DNS 转发器启动");
     info!("请求超时: {}s", config.timeout_secs);
     
+    // 验证监听器端口配置
+    config.validate_listener_ports()?;
+    
     // 加载域名列表文件
     for (name, list) in &mut config.lists {
         let path_copy = list.path.clone();

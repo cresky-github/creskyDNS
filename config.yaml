@@ -14,10 +14,16 @@ log:
   format: "|{date}|{time}|{level}|creskyDNS|{module}|{message}|"
 
 # 2) 监听器（UDP+TCP）
+# 端口说明：
+#   - 'rule' 键名固定，端口可用：53 或 1025-65535
+#   - 'rule' 不参与 rules 决策，即使在 rules 中引用也无效（会输出 warn 日志）
+#   - 其它键名端口范围：1025-65535（不能使用 53 或 0-1024 系统保留端口）
+#   - 端口 53 只能用于 'rule' 监听器
 listener:
-  main: 5353            # 主监听端口
+  rule: 5353            # 主监听端口（固定键名）
+  direct: 5310          # 直连监听端口
+  proxy: 5320           # 代理监听端口
   # backup: 5354        # 可选备用端口
-  # test: 5355          # 可选测试端口
 
 # 3) 缓存（在上游前定义，便于复用）
 cache:

@@ -212,6 +212,53 @@ impl Default for Config {
 }
 
 impl Config {
+    /// 验证监听器端口配置
+    pub fn validate_listener_ports(&self) -> Result<()> {
+        use tracing::{warn, error};
+        
+        const RULE_KEY: &str = "rule";
+        let mut has_error = false;
+        
+        for (name, port) in &self.listener {
+            // 检查 rule 键的端口范围
+            if name == RULE_KEY {
+                // rule 端口范围：53 或 1025-65535
+                if *port != 53 && (*port < 1025 || *port > 65535) {
+                    error!("监听器 '{}' 端口 {} 无效，取值范围：53 或 1025-65535", name, port);
+                    has_error = true;
+                }
+                
+                // 检查 rule 是否在 rules 中被使用
+                for (group_name, rules_list) in &self.rules {
+                    for rule_str in rules_list {
+                        if let Some((list_name, _)) = rule_str.split_once(',') {
+                            let list_name = list_name.trim();
+                            if list_name == RULE_KEY {
+                                warn!("规则组 '{}' 中引用了监听器名称 '{}' 作为域名列表，这是无效的。'{}' 是保留的监听器名称，不参与 rules 决策", 
+                                    group_name, RULE_KEY, RULE_KEY);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 其它监听器端口范围：1025-65535，不能是 53
+                if *port == 53 {
+                    error!("监听器 '{}' 不能使用端口 53，端口 53 只能用于 'rule' 监听器", name);
+                    has_error = true;
+                } else if *port < 1025 || *port > 65535 {
+                    error!("监听器 '{}' 端口 {} 无效，取值范围：1025-65535（0-1024 由操作系统保留，除了 53 只能用于 'rule'）", name, port);
+                    has_error = true;
+                }
+            }
+        }
+        
+        if has_error {
+            return Err(anyhow::anyhow!("监听器端口配置验证失败，请检查配置文件"));
+        }
+        
+        Ok(())
+    }
+    
     /// 根据上游名称获取上游配置
     pub fn get_upstream(&self, name: &str) -> Result<&UpstreamList> {
         self.upstreams.get(name)
