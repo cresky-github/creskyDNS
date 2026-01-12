@@ -23,6 +23,9 @@ quinn = "0.10"
 tokio-socks = "0.5"
 futures = "0.3"
 rand = "0.8"
+hyper = { version = "0.14", features = ["client", "http1", "http2", "tcp"] }
+hyper-rustls = "0.24"
+http = "0.2"
 
 [[bin]]
 name = "creskyDNS"

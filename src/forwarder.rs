@@ -873,38 +873,44 @@ impl DnsForwarder {
             .unwrap_or_else(|| "<unknown>".to_string());
         debug!("[DoH] 开始处理查询: {} -> {}", query_name, upstream_addr);
         
-        // 解析 URL，提取域名
+        // 解析 URL，提取域名和路径
         let url = upstream_addr.to_string();
-        let domain = url
-            .strip_prefix("https://")
-            .ok_or_else(|| anyhow::anyhow!("无效的 DoH URL: {}", url))?
-            .split('/')
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 提取域名: {}", url))?
-            .split(':')
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 提取域名: {}", url))?;
+        let (domain, port, path) = {
+            let url_without_scheme = url
+                .strip_prefix("https://")
+                .ok_or_else(|| anyhow::anyhow!("无效的 DoH URL: {}", url))?;
+            
+            let (host_port, path) = url_without_scheme
+                .split_once('/')
+                .map(|(h, p)| (h, format!("/{}", p)))
+                .unwrap_or((url_without_scheme, "/dns-query".to_string()));
+            
+            let (domain, port) = if let Some((d, p)) = host_port.split_once(':') {
+                (d.to_string(), p.parse::<u16>()?)
+            } else {
+                (host_port.to_string(), 443)
+            };
+            
+            (domain, port, path)
+        };
         
-        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名并构造 IP URL
-        let resolved_url = if let Some(bootstrap_servers) = bootstrap {
-            match self.resolve_with_bootstrap(domain, bootstrap_servers).await {
+        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名并获取 IP 地址
+        let (target_host, original_domain) = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(&domain, bootstrap_servers).await {
                 Ok(ips) => {
                     let ip = ips.first()
                         .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    // 替换 URL 中的域名为 IP
-                    let ip_url = url.replace(domain, ip);
                     debug!("[Bootstrap] DoH 服务器 {} -> IP: {}", domain, ip);
-                    debug!("[DoH] 使用 IP URL: {}", ip_url);
-                    ip_url
+                    (ip.clone(), Some(domain.clone())) // 返回 IP 和原始域名
                 }
                 Err(e) => {
                     warn!("Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
-                    url.clone()
+                    (domain.clone(), None) // 使用域名连接，无需特殊处理
                 }
             }
         } else {
             debug!("DoH 未配置 bootstrap DNS，使用系统 DNS 解析");
-            url.clone()
+            (domain.clone(), None)
         };
 
         // 将 DNS 消息编码为 base64
@@ -913,48 +919,123 @@ impl DnsForwarder {
         use base64::Engine;
         let dns_query = URL_SAFE_NO_PAD.encode(&request_data);
 
-        // 构建 DoH 请求，启用代理支持
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(timeout)
-            .use_rustls_tls()
-            .danger_accept_invalid_certs(bootstrap.is_some()); // 如果使用 bootstrap（IP 地址），接受无效证书
-        
-        // 如果配置了代理，优先使用配置的代理；否则使用系统代理
-        if let Some(proxy_url) = proxy {
-            debug!("DoH 使用配置的代理: {}", proxy_url);
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| anyhow::anyhow!("无效的代理配置 '{}': {}", proxy_url, e))?;
-            client_builder = client_builder.proxy(proxy);
+        // 如果使用 bootstrap，需要手动建立 TLS 连接以控制 SNI
+        if let Some(sni_domain) = original_domain {
+            debug!("[DoH] 使用 bootstrap: 连接到 {}:{}, SNI: {}", target_host, port, sni_domain);
+            
+            // 解析目标地址
+            let socket_addr: SocketAddr = format!("{}:{}", target_host, port).parse()?;
+            
+            // 建立 TCP 连接
+            let stream = tokio::time::timeout(
+                timeout,
+                TcpStream::connect(socket_addr)
+            ).await
+            .map_err(|_| anyhow::anyhow!("连接超时"))??;
+            
+            debug!("[DoH] TCP 连接已建立到 {}", socket_addr);
+            
+            // 配置 TLS
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    ta.subject,
+                    ta.spki,
+                    ta.name_constraints,
+                )
+            }));
+            
+            let tls_config = Arc::new(ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(root_store)
+                .with_no_client_auth());
+            
+            // 创建 TLS 连接器并设置 SNI
+            let connector = tokio_rustls::TlsConnector::from(tls_config);
+            let server_name = rustls::ServerName::try_from(sni_domain.as_str())
+                .map_err(|e| anyhow::anyhow!("无效的服务器名称: {}", e))?;
+            
+            let mut tls_stream = tokio::time::timeout(
+                timeout,
+                connector.connect(server_name, stream)
+            ).await
+            .map_err(|_| anyhow::anyhow!("TLS 握手超时"))??;
+            
+            debug!("[DoH] TLS 握手完成，SNI: {}", sni_domain);
+            
+            // 构建 HTTP/1.1 请求
+            let request_line = format!("GET {}?dns={} HTTP/1.1\r\n", path, dns_query);
+            let headers = format!(
+                "Host: {}\r\nAccept: application/dns-message\r\nConnection: close\r\n\r\n",
+                sni_domain
+            );
+            let http_request = format!("{}{}", request_line, headers);
+            
+            debug!("[DoH] 发送 HTTP 请求: GET {}?dns=...", path);
+            
+            // 发送 HTTP 请求
+            tls_stream.write_all(http_request.as_bytes()).await?;
+            
+            // 读取 HTTP 响应
+            let mut response_data = Vec::new();
+            tokio::time::timeout(
+                timeout,
+                tls_stream.read_to_end(&mut response_data)
+            ).await
+            .map_err(|_| anyhow::anyhow!("读取响应超时"))??;
+            
+            debug!("[DoH] 收到响应，大小: {} 字节", response_data.len());
+            
+            // 解析 HTTP 响应
+            let response_str = String::from_utf8_lossy(&response_data);
+            let parts: Vec<&str> = response_str.splitn(2, "\r\n\r\n").collect();
+            
+            if parts.len() < 2 {
+                anyhow::bail!("无效的 HTTP 响应格式");
+            }
+            
+            let header_part = parts[0];
+            let body_part = parts[1];
+            
+            // 检查 HTTP 状态码
+            let status_line = header_part.lines().next()
+                .ok_or_else(|| anyhow::anyhow!("缺少 HTTP 状态行"))?;
+            
+            if !status_line.contains("200") {
+                anyhow::bail!("DoH 请求失败: {}", status_line);
+            }
+            
+            // 解析 DNS 响应
+            let message = Message::from_vec(body_part.as_bytes())?;
+            
+            debug!("DoH 收到来自 {} 的响应", upstream_addr);
+            Ok(message)
         } else {
-            debug!("DoH 使用系统代理环境变量（HTTP_PROXY、HTTPS_PROXY、ALL_PROXY）");
+            // 不使用 bootstrap，使用 reqwest 标准方式
+            debug!("[DoH] 标准连接到 {}:{}", domain, port);
+            
+            let client = reqwest::Client::builder()
+                .timeout(timeout)
+                .use_rustls_tls()
+                .build()?;
+            
+            let response = client
+                .get(&url)
+                .query(&[("dns", &dns_query)])
+                .header("Accept", "application/dns-message")
+                .send()
+                .await?;
+            
+            if !response.status().is_success() {
+                anyhow::bail!("DoH 请求失败: HTTP {}", response.status());
+            }
+            
+            let response_data = response.bytes().await?;
+            let message = Message::from_vec(&response_data)?;
+            
+            debug!("DoH 收到来自 {} 的响应", upstream_addr);
+            Ok(message)
         }
-        
-        let client = client_builder.build()?;
-
-        debug!("DoH 向 {} 发送查询（原始域名: {}）", resolved_url, domain);
-
-        let mut request_builder = client
-            .get(&resolved_url)
-            .query(&[("dns", &dns_query)])
-            .header("Accept", "application/dns-message");
-        
-        // 如果使用了 bootstrap（IP 地址），必须设置 Host 头以保持 SNI 和虚拟主机正确
-        if bootstrap.is_some() {
-            debug!("DoH 设置 Host 头: {}", domain);
-            request_builder = request_builder.header("Host", domain);
-        }
-        
-        let response = request_builder.send().await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("DoH 请求失败: HTTP {}", response.status());
-        }
-
-        let response_data = response.bytes().await?;
-        let message = Message::from_vec(&response_data)?;
-        
-        debug!("DoH 收到来自 {} 的响应", upstream_addr);
-        Ok(message)
     }
 
     /// DoQ (DNS over QUIC) 转发
