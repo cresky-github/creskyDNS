@@ -507,7 +507,7 @@ impl DnsForwarder {
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
             Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.proxy.as_ref()).await,
-            Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.proxy.as_ref()).await,
+            Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.bootstrap.as_ref(), upstream_list.proxy.as_ref()).await,
             // DoQ 基于 UDP，SOCKS5 代理主要支持 TCP，暂不支持
             Protocol::Doq => self.forward_doq(request, upstream_addr).await,
             Protocol::H3 => self.forward_h3(request, upstream_addr).await,
@@ -776,10 +776,100 @@ impl DnsForwarder {
         root_store
     }
 
-    /// DoH (DNS over HTTPS) 转发
-    async fn forward_doh(&self, request: &Message, upstream_addr: &str, proxy: Option<&String>) -> Result<Message> {
-        let url = upstream_addr.to_string();
+    /// 使用 Bootstrap DNS 解析域名
+    /// 
+    /// 返回解析到的 IP 地址列表
+    async fn resolve_with_bootstrap(&self, domain: &str, bootstrap_servers: &[String]) -> Result<Vec<String>> {
+        use hickory_proto::op::{Message, Query, OpCode};
+        use hickory_proto::rr::{Name, RecordType, RData};
+        use std::str::FromStr;
+        
         let timeout = Duration::from_secs(self.config.timeout_secs);
+        
+        // 尝试每个 bootstrap DNS 服务器
+        for bootstrap_addr in bootstrap_servers {
+            debug!("使用 bootstrap DNS {} 解析域名: {}", bootstrap_addr, domain);
+            
+            // 构造 DNS 查询（A 记录）
+            let domain_name = match Name::from_str(&format!("{}.", domain)) {
+                Ok(name) => name,
+                Err(e) => {
+                    warn!("Bootstrap 解析: 域名格式错误 '{}': {}", domain, e);
+                    continue;
+                }
+            };
+            
+            let mut request = Message::new();
+            request.set_id(rand::random());
+            request.set_op_code(OpCode::Query);
+            request.set_recursion_desired(true);
+            request.add_query(Query::query(domain_name, RecordType::A));
+            
+            // 使用 UDP 查询 bootstrap DNS
+            let result = match self.forward_udp(&request, bootstrap_addr).await {
+                Ok(response) => {
+                    // 提取 A 记录中的 IP 地址
+                    let mut ips = Vec::new();
+                    for answer in response.answers() {
+                        if let Some(RData::A(ipv4)) = answer.data() {
+                            ips.push(ipv4.to_string());
+                        }
+                    }
+                    
+                    if !ips.is_empty() {
+                        debug!("Bootstrap DNS 解析成功: {} -> {:?}", domain, ips);
+                        return Ok(ips);
+                    } else {
+                        debug!("Bootstrap DNS {} 未返回 A 记录", bootstrap_addr);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    warn!("Bootstrap DNS {} 查询失败: {}", bootstrap_addr, e);
+                    continue;
+                }
+            };
+        }
+        
+        anyhow::bail!("所有 Bootstrap DNS 服务器都无法解析域名: {}", domain)
+    }
+
+    /// DoH (DNS over HTTPS) 转发
+    async fn forward_doh(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>, proxy: Option<&String>) -> Result<Message> {
+        let timeout = Duration::from_secs(self.config.timeout_secs);
+        
+        // 解析 URL，提取域名
+        let url = upstream_addr.to_string();
+        let domain = url
+            .strip_prefix("https://")
+            .ok_or_else(|| anyhow::anyhow!("无效的 DoH URL: {}", url))?
+            .split('/')
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 提取域名: {}", url))?
+            .split(':')
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("无法从 URL 提取域名: {}", url))?;
+        
+        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名并构造 IP URL
+        let resolved_url = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(domain, bootstrap_servers).await {
+                Ok(ips) => {
+                    let ip = ips.first()
+                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                    // 替换 URL 中的域名为 IP
+                    let ip_url = url.replace(domain, ip);
+                    debug!("DoH 使用 bootstrap 解析: {} -> {}, URL: {}", domain, ip, ip_url);
+                    ip_url
+                }
+                Err(e) => {
+                    warn!("Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                    url.clone()
+                }
+            }
+        } else {
+            debug!("DoH 未配置 bootstrap DNS，使用系统 DNS 解析");
+            url.clone()
+        };
 
         // 将 DNS 消息编码为 base64
         let request_data = request.to_vec()?;
@@ -790,7 +880,8 @@ impl DnsForwarder {
         // 构建 DoH 请求，启用代理支持
         let mut client_builder = reqwest::Client::builder()
             .timeout(timeout)
-            .use_rustls_tls();
+            .use_rustls_tls()
+            .danger_accept_invalid_certs(bootstrap.is_some()); // 如果使用 bootstrap（IP 地址），接受无效证书
         
         // 如果配置了代理，优先使用配置的代理；否则使用系统代理
         if let Some(proxy_url) = proxy {
@@ -804,14 +895,24 @@ impl DnsForwarder {
         
         let client = client_builder.build()?;
 
-        debug!("DoH 向 {} 发送查询", upstream_addr);
+        debug!("DoH 向 {} 发送查询（原始域名: {}）", resolved_url, domain);
 
-        let response = client
-            .get(&url)
+        let mut request_builder = client
+            .get(&resolved_url)
             .query(&[("dns", &dns_query)])
-            .header("Accept", "application/dns-message")
-            .send()
-            .await?;
+            .header("Accept", "application/dns-message");
+        
+        // 如果使用了 IP 地址，需要手动设置 Host 头（保持 SNI 正确）
+        if bootstrap.is_some() && resolved_url.contains("://") {
+            if let Some(url_domain) = upstream_addr.strip_prefix("https://") {
+                if let Some(host) = url_domain.split('/').next() {
+                    debug!("DoH 设置 Host 头: {}", host);
+                    request_builder = request_builder.header("Host", host);
+                }
+            }
+        }
+        
+        let response = request_builder.send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("DoH 请求失败: HTTP {}", response.status());

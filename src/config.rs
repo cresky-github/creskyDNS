@@ -48,9 +48,13 @@ pub struct DomainListReloadState {
 pub struct UpstreamList {
     /// 上游服务器地址列表
     pub addr: Vec<String>,
+    /// Bootstrap DNS 服务器列表（用于解析 DoH/DoT 服务器的域名）
+    pub bootstrap: Option<Vec<String>>,
     /// HTTP/HTTPS 代理地址（可选，用于 DoH）
     /// 格式: http://127.0.0.1:7890 或 socks5://127.0.0.1:7891
     pub proxy: Option<String>,
+    /// 缓存 ID（可选）
+    pub cache: Option<String>,
 }
 
 /// 日志配置
