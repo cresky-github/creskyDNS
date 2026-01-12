@@ -563,7 +563,7 @@ fn print_help() {
     println!();
     println!("选项:");
     println!("  -c, --config <文件>    指定配置文件路径");
-    println!("  -w, --work-dir <目录>  指定工作目录（相对路径将基于此目录）");
+    println!("  -w, --work-dir <目录>  指定工作目录（默认：可执行文件所在目录）");
     println!("  -h, --help            显示此帮助信息");
     println!("  -v, --version         显示版本信息");
     println!();
@@ -578,6 +578,10 @@ fn print_help() {
     println!("  3. 当前目录下的 config.yaml, config.yml, config.json");
     println!("  4. ./etc/creskyDNS.yaml");
     println!("  5. 使用内置默认配置");
+    println!();
+    println!("注意:");
+    println!("  - 不指定 -w 时，默认使用可执行文件所在目录作为工作目录");
+    println!("  - 配置文件中的相对路径将基于工作目录解析");
 }
 
 /// 预热查询：对冷启动加载的域名进行实际 DNS 查询
@@ -663,9 +667,16 @@ fn load_config() -> Result<Config> {
     // 解析命令行参数
     let (config_arg, work_dir) = parse_args();
     
-    // 如果指定了工作目录，切换到该目录
+    // 如果没有指定工作目录，使用可执行文件所在目录
+    let work_dir = work_dir.or_else(|| {
+        env::current_exe().ok().and_then(|exe_path| {
+            exe_path.parent().map(|p| p.to_string_lossy().to_string())
+        })
+    });
+    
+    // 切换到工作目录
     if let Some(dir) = work_dir {
-        info!("切换工作目录到: {}", dir);
+        info!("工作目录: {}", dir);
         if let Err(e) = env::set_current_dir(&dir) {
             return Err(anyhow::anyhow!("无法切换到工作目录 '{}': {}", dir, e));
         }
