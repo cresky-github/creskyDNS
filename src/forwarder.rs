@@ -934,14 +934,10 @@ impl DnsForwarder {
             .query(&[("dns", &dns_query)])
             .header("Accept", "application/dns-message");
         
-        // 如果使用了 IP 地址，需要手动设置 Host 头（保持 SNI 正确）
-        if bootstrap.is_some() && resolved_url.contains("://") {
-            if let Some(url_domain) = upstream_addr.strip_prefix("https://") {
-                if let Some(host) = url_domain.split('/').next() {
-                    debug!("DoH 设置 Host 头: {}", host);
-                    request_builder = request_builder.header("Host", host);
-                }
-            }
+        // 如果使用了 bootstrap（IP 地址），必须设置 Host 头以保持 SNI 和虚拟主机正确
+        if bootstrap.is_some() {
+            debug!("DoH 设置 Host 头: {}", domain);
+            request_builder = request_builder.header("Host", domain);
         }
         
         let response = request_builder.send().await?;
