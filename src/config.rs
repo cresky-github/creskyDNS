@@ -467,6 +467,39 @@ impl DomainList {
             .collect();
         Ok(domains)
     }
+    
+    /// 从文件加载 IP CIDR 列表（自动转换为大写）
+    /// 
+    /// 格式：|CIDR|country_code|
+    /// 示例：
+    /// ```text
+    /// |39.156.0.0/16|CN|
+    /// |1.1.1.0/24|US|  # 这是注释
+    /// ```
+    /// 
+    /// 规则：
+    /// - 每行 # 之前的内容转换为大写
+    /// - # 之后的注释不转换
+    pub fn from_ipcidr_file(path: &str) -> Result<Vec<String>> {
+        let content = fs::read_to_string(path)?;
+        let entries = content
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.starts_with('#')) // 跳过空行和注释行
+            .map(|line| {
+                // 分离注释部分
+                if let Some(comment_pos) = line.find('#') {
+                    let (content, comment) = line.split_at(comment_pos);
+                    // 内容部分转大写，注释部分保持原样
+                    format!("{}{}", content.to_uppercase(), comment)
+                } else {
+                    // 整行转大写
+                    line.to_uppercase()
+                }
+            })
+            .collect();
+        Ok(entries)
+    }
 
     /// 加载域名列表（支持文件或URL）
     pub async fn load(&mut self) -> Result<()> {
@@ -476,7 +509,12 @@ impl DomainList {
                     self.domains = Self::from_text_file(path)?;
                 }
                 _ => {
-                    anyhow::bail!("不支持的域名列表格式: {}", self.format);
+                    // 默认使用 text 格式，但对 ipcidr 类型特殊处理
+                    if self.r#type == "ipcidr" {
+                        self.domains = Self::from_ipcidr_file(path)?;
+                    } else {
+                        self.domains = Self::from_text_file(path)?;
+                    }
                 }
             }
         } else if let Some(url) = &self.url {
@@ -494,7 +532,12 @@ impl DomainList {
                     self.domains = Self::from_text_file(path)?;
                 }
                 _ => {
-                    anyhow::bail!("不支持的域名列表格式: {}", self.format);
+                    // 默认使用 text 格式，但对 ipcidr 类型特殊处理
+                    if self.r#type == "ipcidr" {
+                        self.domains = Self::from_ipcidr_file(path)?;
+                    } else {
+                        self.domains = Self::from_text_file(path)?;
+                    }
                 }
             }
         } else if let Some(url) = &self.url {
