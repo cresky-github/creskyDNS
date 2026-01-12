@@ -1,76 +1,264 @@
-# DNS 转发器配置文件 (YAML 格式)
+# ============================================================
+# creskyDNS 完整配置示例
+# 版本: v0.1.0
+# 说明: 包含所有可配置元素的示例配置文件
+# ============================================================
 
-# 监听器配置 (实例名 -> 端口)
+# 1️⃣ 日志系统配置
+log:
+  enabled: true                                  # 是否启用日志
+  path: "./logs/creskyDNS.log"                  # 日志文件路径
+  level: "info"                                  # 日志级别: trace/debug/info/warn/error
+  max_time: 7d                                   # 日志轮转时间 (支持: d/h/m/s)
+  max_size: 100MB                                # 单个日志文件最大大小
+  max_backups: 10                                # 保留的备份日志文件数量
+  format: "|{date}|{time}|{level}|creskyDNS|{module}|{message}|"
+  # format 字段说明:
+  #   {date}    - 本地化日期
+  #   {time}    - 本地化时间
+  #   {level}   - 日志级别
+  #   {module}  - 模块名称
+  #   {message} - 日志消息内容
+
+# 2️⃣ 监听器配置 (支持 UDP + TCP)
 listener:
-    main: 5353
-    test: 5354
+  rule: 5353              # 主监听端口 (固定键名，参与 rules 决策，但不参与 rules.servers)
+                          # 端口范围: 53 或 1025-65535
+  direct: 5310            # 直连监听端口 (自定义键名)
+                          # 端口范围: 1025-65535 (不能是 53)
+  proxy: 5320             # 代理监听端口 (自定义键名)
+  # test: 5354            # 可选：测试监听端口
+  # backup: 5355          # 可选：备用监听端口
 
-# 缓存配置 (ID -> 配置)
+# 端口说明:
+#   - 'rule' 键名固定，端口可用: 53 或 1025-65535
+#   - 其它键名端口范围: 1025-65535 (不能使用 53 或 0-1024 系统保留端口)
+#   - 每个监听器同时监听 IPv4 和 IPv6
+
+# 3️⃣ 缓存配置
 cache:
-    main:
-        size: 10000
-        min_ttl: 60
-        max_ttl: 86400
-    default:
-        size: 1000
-        min_ttl: 60
-        max_ttl: 86400
+  # Rule Cache (规则缓存 - 固定名称 'rule')
+  rule:
+    type: rule                                   # 缓存类型: rule (固定值)
+    size: 10000                                  # 缓存条目数量
+    output: "./output/cache/rule.cache.txt"     # 缓存输出文件路径 (可选)
+    interval: 5m                                 # 导出间隔 (默认 5m，可选)
+    cold_start:                                  # 冷启动配置 (可选)
+      enabled: true                              # 启用冷启动
+      timeout: 5000                              # 超时时间 (毫秒)
+      parallel: 10                               # 并发查询数
 
-# 上游DNS服务器配置 (tag -> config)
-upstreams:
-  ali:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-    cache: "main"
-  google:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "default"
-  cloudflare:
-    addr: "https://cloudflare-dns.com/dns-query"
-    bootstrap: "udp://1.1.1.1:53"
-    cache: "default"
-  local_dns:
-    addr: "udp://223.5.5.5:53"
-    # UDP/TCP 不需要 bootstrap
-  direct_dns:
-    addr: "udp://8.8.8.8:53"
-    cache: "default"
-  proxy_dns:
-    addr: "udp://1.1.1.1:53"
-    cache: "default"
+  # Domain Cache (域名缓存 - 主缓存)
+  domain:
+    type: domain                                 # 缓存类型: domain
+    size: 10000                                  # 缓存条目数量
+    min_ttl: 60                                  # 最小 TTL (秒)
+    max_ttl: 86400                               # 最大 TTL (秒，1天)
+    output: "./output/cache/domain.cache.txt"   # 缓存输出文件路径 (可选)
+    interval: 5m                                 # 导出间隔 (默认 5m，可选)
+    cold_start:                                  # 冷启动配置 (可选)
+      enabled: true                              # 启用冷启动
+      timeout: 5000                              # 超时时间 (毫秒)
+      parallel: 10                               # 并发查询数
 
-# 域名列表配置 (name -> config)
-lists:
-  direct:
-    type: "domain"
-    path: "direct.txt"
-    url: "https://example.com/direct.txt"
-    interval: 86400
-  proxy:
-    type: "domain"
-    path: "proxy.txt"
-    url: "https://example.com/proxy.txt"
-    interval: 86400
-
-# 规则配置
-rules:
-    # 服务器实例规则：实例名,上游名 (可选，不写则完全按域名规则执行)
-    servers:
-        - main,local_dns
-        - test,cloudflare
-    # 域名规则：域名列表名,上游名
-    main:
-        - direct,ali
-        - proxy,google
-    upstream: "default_dns"
-
-# 请求超时时间（秒）
-timeout_secs: 5
-
-# 缓存配置 (id -> config)
-cache:
-  default:
-    size: 1000
+  # Domain Cache (测试缓存 - 可选)
+  test:
+    type: domain
+    size: 5000
     min_ttl: 60
     max_ttl: 86400
+    output: "./output/cache/test.cache.txt"
+    interval: 10m                                # 导出间隔
+
+  # 缓存禁用示例 (如果需要禁用缓存)
+  # disable:
+  #   type: cache                                # 特殊类型，表示禁用缓存
+
+# 缓存格式说明:
+#   Rule Cache:   |cache_id|match_domain|upstream|
+#   Domain Cache: |cache_id|match_domain|upstream|qname|ttl|IP(及其它信息)|
+
+# 4️⃣ 上游 DNS 服务器配置
+upstreams:
+  # 国内 DNS (DoH)
+  cn_dns:
+    addr:
+      - "https://dns.alidns.com/dns-query"      # 阿里云 DoH
+    bootstrap:
+      - "udp://223.5.5.5:53"                    # Bootstrap DNS (用于解析 DoH 域名)
+    cache: "domain"                              # 使用的缓存 ID
+
+  # 国际 DNS (DoH)
+  global_dns:
+    addr:
+      - "https://dns.google/dns-query"          # Google DoH
+    bootstrap:
+      - "udp://8.8.8.8:53"
+    cache: "domain"
+
+  # Cloudflare DNS (DoH)
+  cloudflare_dns:
+    addr:
+      - "https://cloudflare-dns.com/dns-query"
+    bootstrap:
+      - "udp://1.1.1.1:53"
+    cache: "test"
+
+  # 本地 DNS (UDP)
+  local_dns:
+    addr:
+      - "udp://192.168.1.1:53"                  # 内网 DNS
+    cache: "domain"
+
+  # 备用 DNS (UDP)
+  backup_dns:
+    addr:
+      - "udp://114.114.114.114:53"              # 114 DNS
+    cache: "domain"
+
+  # 广告拦截黑洞 (特殊用途)
+  ad_block:
+    addr:
+      - "rcode"                                  # 特殊值: 返回 NXDOMAIN (域名不存在)
+    # 或者使用黑洞 IP: "udp://127.0.0.1:1"
+
+  # TCP DNS 示例
+  tcp_dns:
+    addr:
+      - "tcp://8.8.8.8:53"
+    cache: "domain"
+
+  # 多地址轮询示例
+  multi_dns:
+    addr:
+      - "udp://223.5.5.5:53"
+      - "udp://223.6.6.6:53"
+    cache: "domain"
+
+# 上游协议支持:
+#   - https:// (DoH - DNS over HTTPS)
+#   - udp://   (标准 UDP DNS)
+#   - tcp://   (标准 TCP DNS)
+#   - rcode    (特殊值，返回错误响应码)
+
+# 5️⃣ 域名列表配置
+lists:
+  # 国内直连域名列表
+  china_domains:
+    type: "domain"                               # 列表类型: domain
+    format: "text"                               # 格式: text
+    path: "./lists/china_domains.txt"           # 本地文件路径
+    interval: 3600                               # 热重载间隔 (秒)
+    # url: "https://example.com/china.txt"      # 可选: 远程 URL
+    # domains: []                                # 可选: 直接内联域名列表
+
+  # 国际代理域名列表
+  global_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/global_domains.txt"
+    interval: 3600
+
+  # 广告域名拦截列表
+  adblock_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/adblock_domains.txt"
+    interval: 7200                               # 2小时重载一次
+
+  # 自定义域名列表
+  custom_domains:
+    type: "domain"
+    format: "text"
+    path: "./lists/custom_domains.txt"
+    interval: 86400                              # 24小时重载一次
+
+  # IP/CIDR 列表示例 (国家代码等)
+  china_ip:
+    type: "ipcidr"                              # 列表类型: ipcidr
+    format: "text"
+    path: "./lists/china_ip.txt"
+    interval: 86400
+    # 注意: ipcidr 类型的列表内容会自动转换为大写 (国家代码)
+
+# 域名列表格式说明:
+#   - 每行一个域名
+#   - 支持通配符: *.example.com
+#   - 支持注释: # 开头的行会被忽略
+#   - 空行会被忽略
+
+# 6️⃣ 规则配置
+rules:
+  # 服务器实例规则 (可选)
+  # 'servers' 是固定名称，用于定义虚拟服务器规则
+  # 如果不写此字段，则完全按域名规则执行
+  servers:
+    - direct,local_dns     # 监听器名称,上游名称
+    - proxy,global_dns
+
+  # 域名规则组 (自定义名称)
+  # 规则名称可以自定义，用于组织不同的规则集
+  main:
+    - china_domains,cn_dns          # 域名列表名,上游名称
+    - global_domains,global_dns
+    - adblock_domains,ad_block
+
+  # 直连规则组
+  direct:
+    - china_domains,cn_dns
+    - custom_domains,local_dns
+
+  # 代理规则组
+  proxy:
+    - global_domains,cloudflare_dns
+
+  # 最终规则 (fallback)
+  # 当所有规则都不匹配时，使用此规则
+  final:
+    upstream: backup_dns              # 默认上游
+    # 可选: 根据地理位置路由
+    # geoip:
+    #   - CN,cn_dns                   # 国家代码,上游名称 (大写)
+    #   - US,global_dns
+
+# 规则匹配优先级:
+#   1. servers 规则 (如果定义)
+#   2. 域名深度匹配 (深度越大，优先级越高)
+#      - www.google.com (深度 3)
+#      - google.com (深度 2)
+#      - com (深度 1)
+#      - . (根域名，深度 0)
+#   3. final 规则 (兜底)
+
+# ============================================================
+# 配置文件说明完毕
+# ============================================================
+
+# 常见配置场景:
+#
+# 📌 场景 1: 国内外智能分流
+#   - china_domains -> cn_dns (国内域名走国内 DNS)
+#   - global_domains -> global_dns (国际域名走国际 DNS)
+#
+# 📌 场景 2: 广告拦截
+#   - adblock_domains -> ad_block (广告域名返回 NXDOMAIN)
+#
+# 📌 场景 3: 内网解析
+#   - custom_domains -> local_dns (内网域名走内网 DNS)
+#
+# 📌 场景 4: 多端口分流
+#   - 不同监听器使用不同的默认上游
+#   - listener.direct -> local_dns
+#   - listener.proxy -> global_dns
+
+# 性能优化建议:
+#   - cache.size: 根据域名数量调整 (建议 10000+)
+#   - interval: 根据列表更新频率调整 (建议 1h - 24h)
+#   - cold_start: 启用冷启动可加快启动速度
+#   - min_ttl: 设置合理的最小 TTL 避免频繁查询
+#   - max_ttl: 设置合理的最大 TTL 平衡缓存时效性
+
+# 热重载说明:
+#   - 域名列表根据 interval 自动热重载
+#   - 缓存内容根据 interval 自动导出到文件
+#   - 重载时会智能保留有效缓存 (validate_on_reload)

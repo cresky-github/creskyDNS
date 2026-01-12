@@ -1,24 +1,163 @@
-# DNS 转发器
+# creskyDNS
 
-用 Rust 实现的高性能 DNS 转发器。
+🚀 **高性能 Rust DNS 转发器** - 支持智能分流、两级缓存、热重载
 
-## 功能特性
+[![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/Version-v0.1.0-green.svg)](https://github.com/yourusername/creskyDNS/releases)
 
-- ✅ 异步 DNS 查询转发（使用 Tokio）
-- ✅ 同时支持 UDP、TCP 和 DoH 协议
-- ✅ 支持多个监听端口
-- ✅ 支持多个上游DNS服务器（标签化管理）
-- ✅ **规则分流**: 根据监听器名称自动分流到不同上游DNS
-- ✅ 支持自定义上游 DNS 服务器
-- ✅ 支持查询超时设置
-- ✅ 详细的日志记录
-- ✅ **域名列表热重新加载**：零停机更新域名列表
-- ✅ **百万级域名优化**：支持超大规模列表（毫秒级加载、微秒级查询）
-- ✅ **两级缓存系统**：Rule Cache + Domain Cache，极速 DNS 解析
+---
 
-## DNS 解析流程（两级缓存优化）
+## ✨ 核心特性
 
-查询请求按以下顺序处理（性能优化）：
+### 🎯 智能路由
+- ✅ **规则引擎**: 基于域名深度匹配的多规则决策系统
+- ✅ **多监听器**: 支持多端口独立路由策略
+- ✅ **域名列表**: 灵活的域名列表管理（支持通配符）
+- ✅ **地理路由**: 支持基于 GeoIP 的智能路由
+
+### ⚡ 高性能缓存
+- ✅ **两级缓存**: Rule Cache + Domain Cache 架构
+- ✅ **冷启动**: 从缓存文件快速恢复（并发预热）
+- ✅ **热重载**: 配置更新时智能保留有效缓存
+- ✅ **缓存导出**: 定期导出缓存到文件（可配置间隔）
+
+### 🔧 多协议支持
+- ✅ **DoH**: DNS over HTTPS（加密查询）
+- ✅ **UDP/TCP**: 标准 DNS 协议
+- ✅ **Bootstrap**: DoH 域名解析引导
+- ✅ **多上游**: 支持多个上游服务器轮询
+
+### 📊 完善的日志系统
+- ✅ **结构化日志**: 管道符分隔，便于解析
+- ✅ **自动轮转**: 按时间/大小自动切分
+- ✅ **多级别**: trace/debug/info/warn/error
+- ✅ **高性能**: 异步写入，不阻塞主线程
+
+### 🔄 零停机运维
+- ✅ **热重载**: 域名列表自动更新（可配置间隔）
+- ✅ **缓存保留**: 重载时智能验证并保留有效缓存
+- ✅ **平滑更新**: 不中断现有查询
+
+---
+
+## 📈 性能指标
+
+```
+🚀 加载时间：8.5s → 1.2s (7x ↑)
+⚡ 查询延迟：850μs → 0.5μs (1700x ↑)
+🔄 更新延迟：1.2s → 5ms (240x ↓)
+💪 QPS 吞吐量：1k → 2M+ (1700x ↑)
+🧠 缓存热重载：清空所有 → 智能保留有效缓存
+```
+
+---
+
+## 🚀 快速开始
+
+### 安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/yourusername/creskyDNS.git
+cd creskyDNS
+
+# 编译
+cargo build --release
+
+# 运行
+./target/release/creskyDNS -c config.yaml
+```
+
+### 基本使用
+
+```bash
+# 使用默认配置
+creskyDNS
+
+# 指定配置文件
+creskyDNS -c config.yaml
+
+# 指定工作目录和配置文件
+creskyDNS -w /opt/creskydns -c config.yaml
+
+# 查看帮助
+creskyDNS --help
+
+# 查看版本
+creskyDNS --version
+```
+
+### 测试
+
+```bash
+# UDP 查询测试
+nslookup google.com 127.0.0.1 -port=5353
+
+# TCP 查询测试
+dig @127.0.0.1 -p 5353 +tcp example.com
+
+# 测试多个监听器
+nslookup google.com 127.0.0.1 -port=5310  # direct 端口
+nslookup google.com 127.0.0.1 -port=5320  # proxy 端口
+```
+
+---
+
+## ⚙️ 配置说明
+
+### 最小配置
+
+```yaml
+# 监听器
+listener:
+  rule: 5353
+
+# 上游 DNS
+upstreams:
+  default:
+    addr:
+      - "udp://8.8.8.8:53"
+
+# 规则
+rules:
+  final:
+    upstream: default
+```
+
+### 完整配置
+
+参考 [config/config.example.yaml](config/config.example.yaml) 获取所有配置选项的详细说明。
+
+### 配置文件查找顺序
+
+1. 命令行参数 `-c` 或 `--config` 指定的路径
+2. 环境变量 `DNS_FORWARDER_CONFIG`
+3. 默认位置：
+   - `config.yaml` / `config.yml`
+   - `config.json`
+   - `./etc/creskyDNS.yaml`
+
+---
+
+## 📚 文档中心
+
+### 核心模块文档
+
+| 模块 | 文档 | 说明 |
+|------|------|------|
+| **日志** | [docs/01-LOG.md](docs/01-LOG.md) | 日志系统配置与使用 |
+| **监听器** | [docs/02-LISTENER.md](docs/02-LISTENER.md) | 多监听器架构与端口配置 |
+| **缓存** | [docs/03-CACHE.md](docs/03-CACHE.md) | 两级缓存、冷启动与热重载 |
+| **上游服务器** | [docs/04-UPSTREAMS.md](docs/04-UPSTREAMS.md) | 多协议上游与智能降级 |
+| **列表** | [docs/05-LISTS.md](docs/05-LISTS.md) | 域名列表与热重载机制 |
+| **规则** | [docs/06-RULES.md](docs/06-RULES.md) | 规则引擎与匹配优先级 |
+
+---
+
+## 🔍 工作原理
+
+### DNS 解析流程（两级缓存优化）
 
 ```
 1️⃣  Rule Cache（规则缓存）
@@ -36,650 +175,223 @@
    ↓ 返回查询结果
 ```
 
-**两级缓存说明**：
-- **Rule Cache**：内存规则缓存，格式 `|domain|upstream|`，reload 时自动清空
-- **Domain Cache**：DNS 响应缓存，格式 `|cache_id|rule|domain|ttl|IP(...)|`，基于 TTL 过期
+### 域名深度匹配示例
 
-## 快速开始
+对于查询域名 `www.google.com`：
+
+```
+深度 3: www.google.com  (精确匹配 - 最高优先级)
+深度 2: google.com      (二级域名匹配)
+深度 1: com             (顶级域名匹配)
+深度 0: .               (根域名匹配 - 最低优先级)
+```
+
+系统按深度优先级进行匹配，找到第一个匹配的规则后停止。
+
+---
+
+## 🎯 使用场景
+
+### 场景 1: 国内外智能分流
+
+```yaml
+lists:
+  china_domains:
+    type: "domain"
+    path: "./lists/china_domains.txt"
+    interval: 3600
+  
+  global_domains:
+    type: "domain"
+    path: "./lists/global_domains.txt"
+    interval: 3600
+
+upstreams:
+  cn_dns:
+    addr: ["https://dns.alidns.com/dns-query"]
+    bootstrap: ["udp://223.5.5.5:53"]
+  
+  global_dns:
+    addr: ["https://dns.google/dns-query"]
+    bootstrap: ["udp://8.8.8.8:53"]
+
+rules:
+  main:
+    - china_domains,cn_dns
+    - global_domains,global_dns
+```
+
+### 场景 2: 广告拦截
+
+```yaml
+lists:
+  adblock:
+    type: "domain"
+    path: "./lists/adblock_domains.txt"
+    interval: 7200
+
+upstreams:
+  ad_block:
+    addr: ["rcode"]  # 返回 NXDOMAIN
+
+rules:
+  main:
+    - adblock,ad_block
+```
+
+### 场景 3: 内网解析
+
+```yaml
+lists:
+  internal:
+    type: "domain"
+    path: "./lists/internal_domains.txt"
+    interval: 86400
+
+upstreams:
+  local_dns:
+    addr: ["udp://192.168.1.1:53"]
+
+rules:
+  main:
+    - internal,local_dns
+```
+
+---
+
+## 🛠️ 开发
+
+### 项目结构
+
+```
+creskyDNS/
+├── src/
+│   ├── main.rs         # 主程序入口
+│   ├── config.rs       # 配置模块
+│   ├── cache.rs        # 缓存管理
+│   ├── forwarder.rs    # DNS 转发核心
+│   └── dns.rs          # DNS 工具函数
+├── docs/               # 模块文档
+│   ├── 01-LOG.md
+│   ├── 02-LISTENER.md
+│   ├── 03-CACHE.md
+│   ├── 04-UPSTREAMS.md
+│   ├── 05-LISTS.md
+│   └── 06-RULES.md
+├── config/             # 配置示例
+│   └── config.example.yaml
+├── Cargo.toml
+└── README.md
+```
+
+### 技术栈
+
+- **tokio** - 异步运行时
+- **hickory-proto** - DNS 协议支持
+- **serde** - 序列化/反序列化
+- **tracing** - 结构化日志
+- **rustls** - TLS 支持（DoH）
+- **reqwest** - HTTP 客户端（DoH）
 
 ### 编译
 
 ```bash
+# Debug 版本
+cargo build
+
+# Release 版本（推荐生产环境）
 cargo build --release
+
+# 指定目标平台
+cargo build --release --target x86_64-unknown-linux-musl
 ```
-
-### 运行
-
-```bash
-# 使用默认配置
-cargo run
-
-# 指定配置文件
-cargo run -- -c config.yaml
-
-# 指定工作目录和配置文件
-cargo run -- -w /opt/creskydns -c config.yaml
-
-# 查看帮助
-cargo run -- --help
-
-# 查看版本
-cargo run -- --version
-```
-
-或使用编译后的二进制文件：
-
-```bash
-# Windows
-.\target\release\creskyDNS.exe -c config.yaml
-.\target\release\creskyDNS.exe -w D:\MyConfig -c config.yaml
-
-# Linux/macOS
-./target/release/creskyDNS -c config.yaml
-./target/release/creskyDNS -w /opt/creskydns -c config.yaml
-```
-
-DNS 转发器默认监听在 `127.0.0.1:5353`，将查询转发到 `8.8.8.8:53`。
-
-### 配置
-
-有多种方式配置转发器（优先级从高到低）：
-
-#### 1. 命令行参数
-```bash
-# 使用 -c 或 --config 指定配置文件
-creskyDNS -c /etc/creskydns/config.yaml
-creskyDNS --config config.yaml
-
-# 使用 -w 或 --work-dir 指定工作目录
-creskyDNS -w /opt/creskydns -c config.yaml
-
-# 兼容旧版：直接指定配置文件（无参数）
-creskyDNS config.yaml
-```
-
-**参数说明**：
-- `-c, --config <文件>` - 指定配置文件路径
-- `-w, --work-dir <目录>` - 指定工作目录（配置文件中的相对路径将基于此目录）
-- `-h, --help` - 显示帮助信息
-- `-v, --version` - 显示版本信息
-
-#### 2. 环境变量
-```bash
-export DNS_FORWARDER_CONFIG=config.yaml
-creskyDNS
-```
-
-#### 3. 默认位置
-程序会自动查找以下位置的配置文件：
-- `config.yaml` / `config.yml`
-- `config.json`
-- `./etc/creskyDNS.yaml`
-
-#### 4. 默认配置
-如果上述都找不到，使用内置的默认配置。
-
-### 配置文件格式
-
-#### YAML 格式 (config.yaml)
-```yaml
-# DNS 转发器配置文件
-
-# 监听器配置 (实例名 -> 端口)
-listener:
-    main: 5353
-    test: 5354
-
-# 缓存配置 (ID -> 配置)
-cache:
-    main:
-        size: 10000
-        min_ttl: 60
-        max_ttl: 86400
-
-# 上游DNS服务器配置 (tag -> config)
-upstreams:
-  ali:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-    cache: "main"
-  google:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "default"
-  cloudflare:
-    addr: "https://cloudflare-dns.com/dns-query"
-    bootstrap: "udp://127.0.0.1:5329"
-    cache: "default"
-  local_dns:
-    addr: "udp://223.5.5.5:53"
-    # UDP/TCP 不需要 bootstrap
-
-# 域名列表配置 (name -> config)
-lists:
-  direct:
-    type: "domain"
-    path: "direct.txt"
-    url: "https://example.com/direct.txt"
-    interval: 86400
-
-# 规则配置
-rules:
-    # 服务器实例规则：实例名,上游名 (可选，不写则完全按域名规则执行)
-    servers:
-        - main,local_dns
-        - test,cloudflare
-    # 域名规则：域名列表名,上游名
-    main:
-        - direct,ali
-        - proxy,google
-```
-
-#### JSON 格式 (config.json)
-```json
-{
-  "listener": {
-    "main": 5353,
-    "test": 5354
-  },
-  "cache": {
-    "main": {
-      "size": 10000,
-      "min_ttl": 60,
-      "max_ttl": 86400
-    },
-    "default": {
-      "size": 1000,
-      "min_ttl": 60,
-      "max_ttl": 86400
-    }
-  },
-  "upstreams": {
-    "ali": {
-      "addr": "https://dns.alidns.com/dns-query",
-      "bootstrap": "udp://223.5.5.5:53",
-      "cache": "main"
-    },
-    "google": {
-      "addr": "https://dns.google/dns-query",
-      "bootstrap": "udp://8.8.8.8:53",
-      "cache": "default"
-    },
-    "cloudflare": {
-      "addr": "https://cloudflare-dns.com/dns-query",
-      "bootstrap": "udp://127.0.0.1:5329",
-      "cache": "default"
-    },
-    "local_dns": {
-      "addr": "udp://223.5.5.5:53"
-    }
-  },
-  "lists": {
-    "direct": {
-      "type": "domain",
-      "path": "direct.txt",
-      "url": "https://example.com/direct.txt",
-      "interval": 86400
-    }
-  },
-  "rules": {
-    "servers": [
-      "main,local_dns",
-      "test,cloudflare"
-    ],
-    "main": [
-      "direct,ali",
-      "proxy,google"
-    ]
-  }
-}
-```
-
-### 配置说明
-
-| 字段 | 类型 | 说明 | 默认值 |
-|------|------|------|--------|
-| `listener` | Object | 监听器配置 (实例名 -> 端口)，每个实例同时监听UDP/TCP | `{"main": 5353}` |
-| `cache` | Object | 缓存配置 (ID -> config)，包含 size、min_ttl、max_ttl、output 字段 | 见示例 |
-| `upstreams` | Object | 上游DNS服务器配置 (tag -> config)，包含 addr、bootstrap、cache 字段 | 见示例 |
-| `lists` | Object | 域名列表配置 (name -> config)，包含 type、path、url、interval 字段 | 见示例 |
-| `rules` | Object | 规则配置，包含 servers 规则（可选）和域名规则 | 见示例 |
-
-### 监听器配置
-
-监听器定义DNS服务器实例：
-
-```yaml
-listener:
-    main: 5353    # 实例名: 端口
-    test: 5354
-```
-
-每个监听器实例同时支持IPv4和IPv6，并监听UDP和TCP协议。
-
-### 缓存配置
-
-缓存配置定义缓存行为：
-
-```yaml
-cache:
-    main:
-        size: 10000      # 缓存条目数
-        min_ttl: 60      # 最小TTL（秒，可选）
-        max_ttl: 86400   # 最大TTL（秒，可选）
-        output: "./output/cache/main.cache.txt"  # 缓存输出文件路径（可选），格式 |cache ID|rule ID|domain|ttl|
-        cold_start:      # 冷启动配置（可选）
-          enabled: true  # 启动时从 output 文件恢复缓存
-          timeout: 5000  # 冷启动超时时间（毫秒）
-          parallel: 10   # 并发查询数
-```
-
-**冷启动说明**：
-- 应用启动时，自动从 `output` 文件读取缓存域名
-- 根据 rule ID 查找对应的 upstream，进行 DNS 查询刷新
-- 将查询结果更新到缓存和文件
-
-### 上游DNS服务器配置
-
-上游服务器配置支持多种协议：
-
-```yaml
-upstreams:
-  ali:
-    addr: "https://dns.alidns.com/dns-query"  # DoH
-    bootstrap: "udp://223.5.5.5:53"          # 用于解析DoH服务器域名
-    cache: "main"                            # 使用的缓存ID
-  local_dns:
-    addr: "udp://223.5.5.5:53"               # UDP，不需要bootstrap
-```
-
-#### 支持的协议类型
-
-- **`https://`** - DoH (DNS over HTTPS)
-- **`udp://`** - UDP DNS
-- **`tcp://`** - TCP DNS
-
-### 域名列表配置
-
-域名列表用于定义需要特殊处理的域名：
-
-```yaml
-lists:
-  direct:
-    type: "domain"                          # 列表类型
-    path: "direct.txt"                      # 本地文件路径
-    url: "https://example.com/direct.txt"   # 远程URL
-    interval: 86400                         # 更新间隔（秒）
-```
-
-### 规则配置
-
-规则分为两种类型：
-
-#### 服务器实例规则（可选）
-
-`servers` 是固定名称，专门用于书写虚拟服务器规则。如果不写此字段，则完全按域名规则执行。
-
-```yaml
-rules:
-    servers:    # 固定名称，可选字段
-        - main,local_dns    # 实例名,上游名
-        - test,cloudflare
-```
-
-#### 域名规则
-
-```yaml
-rules:
-    main:      # 规则名称，可以自定义
-        - direct,ali        # 域名列表名,上游名
-        - proxy,google
-```
-
-### 配置示例
-
-#### 基本配置
-
-```yaml
-# 监听器配置
-listener:
-    main: 5353
-    test: 5354
-
-# 缓存配置
-cache:
-    main:
-        size: 10000
-        min_ttl: 60
-        max_ttl: 86400
-
-# 上游DNS服务器配置
-upstreams:
-  ali:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-    cache: "main"
-  google:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "default"
-  cloudflare:
-    addr: "https://cloudflare-dns.com/dns-query"
-    bootstrap: "udp://1.1.1.1:53"
-    cache: "default"
-  local_dns:
-    addr: "udp://223.5.5.5:53"
-  direct_dns:
-    addr: "udp://8.8.8.8:53"
-    cache: "default"
-  proxy_dns:
-    addr: "udp://114.114.114.114:53"
-    cache: "default"
-
-# 域名列表配置
-lists:
-  direct:
-    type: "domain"
-    path: "direct.txt"
-    url: "https://example.com/direct.txt"
-    interval: 86400
-  proxy:
-    type: "domain"
-    path: "proxy.txt"
-    url: "https://example.com/proxy.txt"
-    interval: 86400
-
-# 规则配置
-rules:
-    # 服务器实例规则：实例名,上游名 (可选，不写则完全按域名规则执行)
-    servers:
-        - main,local_dns
-        - test,cloudflare
-    # 域名规则：域名列表名,上游名
-    main:
-        - direct,ali
-        - proxy,google
-```
-
-#### 仅域名规则配置示例（不写servers字段）
-
-```yaml
-listener:
-    main: 5353
-
-cache:
-    default:
-        size: 1000
-
-upstreams:
-  ali:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-  google:
-    addr: "udp://8.8.8.8:53"
-
-lists:
-  direct:
-    type: "domain"
-    path: "direct.txt"
-    url: "https://example.com/direct.txt"
-    interval: 86400
-
-# 只有域名规则，完全按域名规则执行
-rules:
-    main:
-        - direct,ali
-```
-
-#### DoH 配置示例
-
-```yaml
-listener:
-    main: 5353
-
-cache:
-    default:
-        size: 1000
-
-upstreams:
-  doh_dns:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "default"
-  default_dns:
-    addr: "udp://8.8.8.8:53"
-
-lists:
-  direct:
-    type: "domain"
-    path: "direct.txt"
-    url: "https://example.com/direct.txt"
-    interval: 86400
-
-rules:
-    servers:
-        - main,default_dns
-    main:
-        - direct,doh_dns
-```
-
-### 完整配置示例
-
-以下是一个完整的、生产就绪的配置文件示例，包含了所有配置选项：
-
-```yaml
-# DNS 转发器完整配置文件
-
-# 监听器配置 (实例名 -> 端口)
-listener:
-    main: 5353        # 主DNS服务器
-    backup: 5354      # 备用DNS服务器
-    ipv6: 5355        # IPv6专用服务器
-
-# 缓存配置 (ID -> 配置)
-cache:
-    fast:             # 快速缓存
-        size: 5000
-        min_ttl: 30
-        max_ttl: 1800
-    standard:         # 标准缓存
-        size: 10000
-        min_ttl: 60
-        max_ttl: 3600
-    persistent:       # 持久缓存
-        size: 50000
-        min_ttl: 300
-        max_ttl: 86400
-
-# 上游DNS服务器配置
-upstreams:
-  # DoH 服务器
-  alidns_doh:
-    addr: "https://dns.alidns.com/dns-query"
-    bootstrap: "udp://223.5.5.5:53"
-    cache: "standard"
-
-  google_doh:
-    addr: "https://dns.google/dns-query"
-    bootstrap: "udp://8.8.8.8:53"
-    cache: "standard"
-
-  cloudflare_doh:
-    addr: "https://cloudflare-dns.com/dns-query"
-    bootstrap: "udp://1.1.1.1:53"
-    cache: "fast"
-
-  # UDP DNS 服务器
-  local_ali:
-    addr: "udp://223.5.5.5:53"
-    cache: "persistent"
-
-  google_udp:
-    addr: "udp://8.8.8.8:53"
-    cache: "standard"
-
-# 域名列表配置
-lists:
-  direct:
-    type: "domain"
-    path: "direct_domains.txt"
-    url: "https://cdn.jsdelivr.net/gh/example/direct-domains.txt"
-    interval: 86400
-
-  proxy:
-    type: "domain"
-    path: "proxy_domains.txt"
-    url: "https://cdn.jsdelivr.net/gh/example/proxy-domains.txt"
-    interval: 43200
-
-  adblock:
-    type: "domain"
-    path: "adblock_domains.txt"
-    url: "https://cdn.jsdelivr.net/gh/example/adblock.txt"
-    interval: 3600
-
-# 规则配置
-rules:
-    # 服务器实例规则
-    servers:
-        - main,local_ali
-        - backup,google_udp
-        - ipv6,google_udp
-
-    # 域名规则
-    domestic:
-        - direct,alidns_doh
-        - adblock,local_ali
-
-    international:
-        - proxy,google_doh
-        - adblock,local_ali
-```
-
-### 测试
-
-使用 `nslookup` 或 `dig` 测试：
-
-```bash
-# UDP 测试
-nslookup google.com 127.0.0.1 -port=5353
-
-# TCP 测试 (使用 dig)
-dig @127.0.0.1 -p 5353 +tcp example.com
-
-# 测试多个端口
-nslookup google.com 127.0.0.1 -port=5354
-dig @127.0.0.1 -p 5354 +tcp example.com
-```
-
-## 项目结构
-
-```
-src/
-├── main.rs       # 主程序入口
-├── config.rs     # 配置模块
-├── forwarder.rs  # DNS 转发器核心逻辑
-└── dns.rs        # DNS 消息编解码工具
-```
-
-## 依赖
-
-- **tokio** - 异步运行时
-- **hickory-dns** - DNS 协议支持
-- **tracing** - 日志记录
-
-## 文档
-
-- [规则匹配说明](RULE_MATCHING.md) - 详细的规则匹配行为文档
-- [域名列表格式说明](DOMAIN_LIST_FORMAT.md) - 域名列表文件的格式规范
-- [域名列表快速参考](DOMAIN_LIST_QUICK_REF.md) - 快速参考指南（dos 和 don'ts）
-- [域名列表热重新加载](LIST_RELOAD.md) - 热重新加载功能说明（interval 配置）
-- [更新说明](DOMAIN_LIST_UPDATE.md) - 域名列表功能更新说明
-
-## 工作原理
-
-1. 监听本地 UDP/TCP 端口（默认 5353）
-2. 接收客户端的 DNS 查询请求
-3. 解析查询域名，按深度从大到小构建各级域名
-4. 根据规则配置匹配域名列表，确定目标上游列表
-5. 如果没有匹配规则，使用服务器默认上游
-6. 将请求转发到匹配的上游 DNS 服务器
-7. 等待并接收上游服务器的响应
-8. 将响应返回给客户端
-
-### 域名深度匹配流程
-
-对于查询域名 `www.google.com`：
-
-1. 深度 3: `www.google.com` (精确匹配)
-2. 深度 2: `google.com` (二级域名匹配)
-3. 深度 1: `com` (顶级域名匹配)
-4. 深度 0: `.` (根域名匹配)
-
-系统按深度优先级进行匹配，找到第一个匹配的规则后停止。
-
-## 后续改进方向
-
-- [x] DNS 缓存（LRU 缓存）
-- [x] 支持多个上游 DNS 服务器（负载均衡）
-- [x] 支持 TCP 协议
-- [x] 支持 DoH 协议
-- [x] 支持自定义转发规则（域名深度匹配）
-- [x] 规则分流（类似 CoreDNS bypass 插件）
-- [x] 域名列表热重新加载（零停机更新）
-- [x] 百万级域名优化（1700x 性能提升）
-- [ ] 支持 DNSSEC 验证
-- [ ] 性能优化（连接池等）
-- [ ] 支持外部域名列表文件
-- [ ] 支持规则优先级配置
-- [ ] 支持 IPv6 优先级
 
 ---
 
-## 📚 文档中心
+## 🐛 故障排查
 
-### 域名列表功能
+### 常见问题
 
-| 功能 | 文档 | 说明 |
-|------|------|------|
-| **列表格式** | [DOMAIN_LIST_FORMAT.md](DOMAIN_LIST_FORMAT.md) | 文件格式规范 |
-| **热重新加载** | [LIST_RELOAD.md](LIST_RELOAD.md) | interval 参数详解 |
-| **interval 机制** | [INTERVAL_TIMELINE.md](INTERVAL_TIMELINE.md) | ⏱️ 时间轴详解（推荐） |
-| **快速参考** | [INTERVAL_QUICK_REF.md](INTERVAL_QUICK_REF.md) | interval 选择表 |
-| **实现细节** | [LIST_RELOAD_IMPLEMENTATION.md](LIST_RELOAD_IMPLEMENTATION.md) | 技术实现说明 |
+**Q: 端口占用错误？**
+```bash
+# 检查端口占用
+netstat -ano | findstr :5353  # Windows
+lsof -i :5353                 # Linux/macOS
 
-### 百万级优化（性能提升 1700 倍）
-
-| 文档 | 用途 | 时间 |
-|------|------|------|
-| **[OPTIMIZATION_README.md](OPTIMIZATION_README.md)** | 📋 总体简介 | 5 分 |
-| **[OPTIMIZATION_QUICK_START.md](OPTIMIZATION_QUICK_START.md)** | ⚡ 快速上手 | 20 分 |
-| **[OPTIMIZATION_MILLION_SCALE.md](OPTIMIZATION_MILLION_SCALE.md)** | 🚀 完整设计 | 1 小时 |
-| **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** | 💻 实现代码 | 1.5 小时 |
-| **[OPTIMIZATION_COMPLETENESS.md](OPTIMIZATION_COMPLETENESS.md)** | 📈 性能分析 | 1 小时 |
-| **[OPTIMIZATION_INDEX.md](OPTIMIZATION_INDEX.md)** | 📑 文档导航 | 5 分 |
-
-#### 性能提升一览
-
-```
-加载时间：8.5s → 1.2s (7x ↑)
-查询延迟：850μs → 0.5μs (1700x ↑)
-更新延迟：1.2s → 5ms (240x ↓)
-QPS 吞吐量：1k → 2M+ (1700x ↑)
+# 修改配置文件中的端口号
+listener:
+  rule: 5354  # 使用其他端口
 ```
 
-#### 推荐阅读路径
+**Q: DoH 查询失败？**
+```yaml
+# 确保配置了 bootstrap DNS
+upstreams:
+  doh_server:
+    addr: ["https://dns.google/dns-query"]
+    bootstrap: ["udp://8.8.8.8:53"]  # 必需！
+```
 
-- **快速上手**：[OPTIMIZATION_QUICK_START.md](OPTIMIZATION_QUICK_START.md) (2 小时完成)
-- **深入理解**：[OPTIMIZATION_MILLION_SCALE.md](OPTIMIZATION_MILLION_SCALE.md) (4 小时学习)
-- **查看代码**：[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) (直接实现)
+**Q: 域名列表不生效？**
+```bash
+# 检查日志输出
+tail -f logs/creskyDNS.log | grep "LIST"
 
-### 其他文档
+# 确认文件路径正确
+ls -la lists/china_domains.txt
 
-| 文档 | 说明 |
-|------|------|
-| [QUICK_START.md](QUICK_START.md) | 快速开始指南 |
-| [USAGE.md](USAGE.md) | 详细使用说明 |
-| [RULE_MATCHING.md](RULE_MATCHING.md) | 规则匹配原理 |
-| [VALIDATION_TOOL.md](VALIDATION_TOOL.md) | 验证工具使用 |
-- [ ] 支持 EDNS 扩展
+# 检查文件格式（每行一个域名）
+cat lists/china_domains.txt
+```
+
+---
+
+## 📊 路线图
+
+- [x] 基础 DNS 转发功能
+- [x] 多协议支持（UDP/TCP/DoH）
+- [x] 规则引擎与智能分流
+- [x] 两级缓存系统
+- [x] 冷启动与热重载
+- [x] 域名列表管理
+- [x] 结构化日志系统
+- [ ] DNSSEC 验证
+- [ ] 负载均衡与健康检查
+- [ ] Web 管理界面
+- [ ] Prometheus 监控指标
+- [ ] Docker 容器化
+
+---
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+## 🤝 贡献
+
+欢迎贡献代码、报告问题或提出建议！
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+---
+
+## 📮 联系方式
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/creskyDNS/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/creskyDNS/discussions)
+
+---
+
+<div align="center">
+
+**[⬆ 回到顶部](#creskydns)**
+
+Made with ❤️ by creskyDNS Team
+
+</div>
