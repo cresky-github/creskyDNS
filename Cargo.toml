@@ -19,15 +19,13 @@ rustls = { version = "0.21", features = ["dangerous_configuration"] }
 tokio-rustls = "0.24"
 webpki-roots = "0.25"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-quinn = "0.9"
+quinn = "0.10"
 tokio-socks = "0.5"
 futures = "0.3"
 rand = "0.8"
 hyper = { version = "0.14", features = ["client", "http1", "http2", "tcp"] }
 hyper-rustls = "0.24"
 http = "0.2"
-h3 = "0.0.3"
-h3-quinn = "0.0.4"
 
 [[bin]]
 name = "creskyDNS"
