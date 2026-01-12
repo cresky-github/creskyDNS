@@ -50,8 +50,13 @@ lists:
     domains:
       - "example.com"
 
-# 测试场景 6：在 rules 中引用 rule（会输出 warn）
+# 测试场景 6：rule 参与顶层 rules 决策（正确）
 rules:
   main:
     - test,default
-    # - rule,default  # 如果取消注释，会输出 warn 日志
+    - rule,default      # ✓ 正确：rule 可以在顶层 rules 中使用
+  
+  # 测试场景 7：rule 不参与 rules.servers 决策（会输出 warn）
+  # servers:
+  #   - rule,default    # 如果取消注释，会输出 warn 日志
+  #   - test,default

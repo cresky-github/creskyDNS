@@ -217,6 +217,7 @@ impl Config {
         use tracing::{warn, error};
         
         const RULE_KEY: &str = "rule";
+        const SERVERS_GROUP: &str = "servers";
         let mut has_error = false;
         
         for (name, port) in &self.listener {
@@ -228,14 +229,14 @@ impl Config {
                     has_error = true;
                 }
                 
-                // 检查 rule 是否在 rules 中被使用
-                for (group_name, rules_list) in &self.rules {
-                    for rule_str in rules_list {
+                // 检查 rule 是否在 rules.servers 中被使用
+                if let Some(servers_rules) = self.rules.get(SERVERS_GROUP) {
+                    for rule_str in servers_rules {
                         if let Some((list_name, _)) = rule_str.split_once(',') {
                             let list_name = list_name.trim();
                             if list_name == RULE_KEY {
-                                warn!("规则组 '{}' 中引用了监听器名称 '{}' 作为域名列表，这是无效的。'{}' 是保留的监听器名称，不参与 rules 决策", 
-                                    group_name, RULE_KEY, RULE_KEY);
+                                warn!("规则组 '{}' 中引用了监听器名称 '{}' 作为域名列表，这是无效的。'{}' 监听器参与顶层 rules 决策，但不参与 rules.servers 决策", 
+                                    SERVERS_GROUP, RULE_KEY, RULE_KEY);
                             }
                         }
                     }
