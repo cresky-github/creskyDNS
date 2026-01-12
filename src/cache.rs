@@ -587,6 +587,13 @@ impl RuleCache {
         let mut invalid_count = 0;
         
         for (match_domain, (upstream, cache_id)) in cache.iter() {
+            // 根域名 "." 禁止参与冷启动机制
+            if match_domain == "." {
+                invalid_count += 1;
+                debug!("Rule Cache 冷启动验证: 跳过根域名 '.' (禁止参与冷启动)");
+                continue;
+            }
+            
             // 验证逻辑：检查 match_domain 是否在任何规则组的域名列表中
             let mut is_valid = false;
             
@@ -609,11 +616,6 @@ impl RuleCache {
                 if is_valid {
                     break;
                 }
-            }
-            
-            // 根域名 "." 始终有效
-            if match_domain == "." {
-                is_valid = true;
             }
             
             if is_valid {
