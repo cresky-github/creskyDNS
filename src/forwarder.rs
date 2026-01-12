@@ -688,6 +688,12 @@ impl DnsForwarder {
     /// DoT (DNS over TLS) 转发
     /// DoT (DNS over TLS) 转发
     async fn forward_dot(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>, proxy: Option<&String>) -> Result<Message> {
+        // 提取用户查询的域名（用于日志）
+        let query_name = request.queries().first()
+            .map(|q| q.name().to_utf8())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        debug!("[DoT] 开始处理查询: {} -> {}", query_name, upstream_addr);
+        
         // 提取主机名和端口
         let addr_part = upstream_addr.strip_prefix("tls://")
             .ok_or_else(|| anyhow::anyhow!("无效的 DoT 地址"))?
@@ -706,7 +712,7 @@ impl DnsForwarder {
                 Ok(ips) => {
                     let ip = ips.first()
                         .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    debug!("DoT 使用 bootstrap 解析: {} -> {}", host, ip);
+                    debug!("[Bootstrap] DoT 服务器 {} -> IP: {}", host, ip);
                     ip.clone()
                 }
                 Err(e) => {
@@ -953,6 +959,12 @@ impl DnsForwarder {
 
     /// DoQ (DNS over QUIC) 转发
     async fn forward_doq(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>) -> Result<Message> {
+        // 提取用户查询的域名（用于日志）
+        let query_name = request.queries().first()
+            .map(|q| q.name().to_utf8())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        debug!("[DoQ] 开始处理查询: {} -> {}", query_name, upstream_addr);
+        
         // 提取主机名和端口
         let addr_part = upstream_addr.strip_prefix("doq://")
             .or_else(|| upstream_addr.strip_prefix("quic://"))
@@ -972,7 +984,7 @@ impl DnsForwarder {
                 Ok(ips) => {
                     let ip = ips.first()
                         .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    debug!("DoQ 使用 bootstrap 解析: {} -> {}", host, ip);
+                    debug!("[Bootstrap] DoQ 服务器 {} -> IP: {}", host, ip);
                     ip.clone()
                 }
                 Err(e) => {
@@ -1053,6 +1065,12 @@ impl DnsForwarder {
 
     /// H3/DoH3 (DNS over HTTP/3) 转发
     async fn forward_h3(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>) -> Result<Message> {
+        // 提取用户查询的域名（用于日志）
+        let query_name = request.queries().first()
+            .map(|q| q.name().to_utf8())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        debug!("[H3] 开始处理查询: {} -> {}", query_name, upstream_addr);
+        
         // 提取 URL
         let addr_part = upstream_addr.strip_prefix("h3://")
             .or_else(|| upstream_addr.strip_prefix("https3://"))
@@ -1080,7 +1098,7 @@ impl DnsForwarder {
                 Ok(ips) => {
                     let ip = ips.first()
                         .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    debug!("H3 使用 bootstrap 解析: {} -> {}", host, ip);
+                    debug!("[Bootstrap] H3 服务器 {} -> IP: {}", host, ip);
                     
                     // 使用 IP 构建 URL
                     let new_url = if port != 443 {
