@@ -296,8 +296,13 @@ async fn monitor_domain_list_reload(
             info!("域名列表已更新，开始验证缓存有效性...");
             
             // 获取缓存管理器并执行验证（类似冷启动机制）
-            let cm_opt = cache_manager.read().unwrap();
-            if let Some(ref cm) = *cm_opt {
+            // 使用块作用域确保 RwLockReadGuard 在 await 之前释放
+            let cm = {
+                let cm_opt = cache_manager.read().unwrap();
+                cm_opt.as_ref().map(Arc::clone)
+            };
+            
+            if let Some(cm) = cm {
                 match cm.validate_on_reload(&config).await {
                     Ok((valid_count, invalid_count)) => {
                         if invalid_count > 0 {
