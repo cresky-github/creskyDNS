@@ -1054,7 +1054,30 @@ impl DnsForwarder {
                 .ok_or_else(|| anyhow::anyhow!("缺少 HTTP 状态行"))?;
             
             if !status_line.contains("200") {
-                anyhow::bail!("DoH 请求失败: {}", status_line);
+                // Bootstrap 模式失败（如 400 错误），回退到标准模式
+                warn!("[DoH] Bootstrap 模式失败: {}，回退到标准模式 (HTTP/2)", status_line);
+                
+                let client = reqwest::Client::builder()
+                    .timeout(timeout)
+                    .use_rustls_tls()
+                    .build()?;
+                
+                let response = client
+                    .get(&url)
+                    .query(&[("dns", &dns_query)])
+                    .header("Accept", "application/dns-message")
+                    .send()
+                    .await?;
+                
+                if !response.status().is_success() {
+                    anyhow::bail!("DoH 请求失败（标准模式）: HTTP {}", response.status());
+                }
+                
+                let response_data = response.bytes().await?;
+                let message = Message::from_vec(&response_data)?;
+                
+                debug!("DoH 收到来自 {} 的响应（标准模式）", upstream_addr);
+                return Ok(message);
             }
             
             // 提取 body（二进制数据）
