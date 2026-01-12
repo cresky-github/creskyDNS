@@ -181,6 +181,36 @@ impl DomainCache {
         debug!("Domain Cache '{}': 未命中域名 {}", self.cache_id, domain);
         None
     }
+    
+    /// 按复合KEY查询缓存（cache_id + match_domain + upstream + qname）
+    pub fn get_by_key(&self, cache_id: &str, match_domain: &str, upstream: &str, qname: &str) -> Option<Message> {
+        let cache = self.cache.read().unwrap();
+        
+        // 遍历缓存，找到匹配的条目
+        for (cached_qname, record) in cache.iter() {
+            if cached_qname == qname 
+                && record.cache_id == cache_id 
+                && record.matched_domain == match_domain 
+                && record.upstream == upstream {
+                
+                if record.is_expired() {
+                    debug!("Domain Cache '{}': KEY匹配但已过期: {}|{}|{}|{}", 
+                        self.cache_id, cache_id, match_domain, upstream, qname);
+                    return None;
+                }
+                
+                debug!(
+                    "Domain Cache '{}': KEY命中: {}|{}|{}|{} (剩余 TTL: {}s)",
+                    self.cache_id, cache_id, match_domain, upstream, qname, record.remaining_ttl()
+                );
+                return Some(record.message.clone());
+            }
+        }
+        
+        debug!("Domain Cache '{}': KEY未命中: {}|{}|{}|{}", 
+            self.cache_id, cache_id, match_domain, upstream, qname);
+        None
+    }
 
     /// 插入缓存
     pub fn insert(&self, domain: String, cache_id: String, matched_domain: String, upstream: String, message: Message, ttl: u64) {
@@ -435,6 +465,60 @@ impl RuleCache {
         }
         debug!("Rule Cache 未命中: {}", domain);
         None
+    }
+    
+    /// 按域名深度查询匹配的 match domain（深度大者优先）
+    /// 返回: Vec<(match_domain, upstream, cache_id)>
+    pub fn get_matches_by_depth(&self, qname: &str) -> Vec<(String, String, String)> {
+        let cache = self.cache.read().unwrap();
+        let mut matches = Vec::new();
+        
+        // 遍历所有 match domain，找到匹配 qname 的条目
+        for (match_domain, (upstream, cache_id)) in cache.iter() {
+            if Self::domain_matches(qname, match_domain) {
+                matches.push((match_domain.clone(), upstream.clone(), cache_id.clone()));
+            }
+        }
+        
+        // 按域名深度排序（深度大者优先）
+        matches.sort_by(|a, b| {
+            let depth_a = Self::get_domain_depth(&a.0);
+            let depth_b = Self::get_domain_depth(&b.0);
+            depth_b.cmp(&depth_a) // 降序
+        });
+        
+        if !matches.is_empty() {
+            debug!("Rule Cache 按深度匹配: {} -> {} 个匹配项", qname, matches.len());
+        }
+        
+        matches
+    }
+    
+    /// 计算域名深度
+    fn get_domain_depth(domain: &str) -> usize {
+        if domain == "." {
+            return 0;
+        }
+        domain.matches('.').count() + 1
+    }
+    
+    /// 判断 qname 是否匹配 match_domain
+    fn domain_matches(qname: &str, match_domain: &str) -> bool {
+        if match_domain == "." {
+            return true; // 根域名匹配所有
+        }
+        
+        // 精确匹配
+        if qname == match_domain {
+            return true;
+        }
+        
+        // 后缀匹配：qname 以 .match_domain 结尾
+        if qname.ends_with(&format!(".", match_domain)) {
+            return true;
+        }
+        
+        false
     }
 
     /// 插入缓存

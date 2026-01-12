@@ -127,48 +127,82 @@ impl DnsForwarder {
             }
         }
         
-        // 2. 查询 Rule Cache（第二优先级）
-        let upstream_info = if let Some(rule_cache) = &self.rule_cache {
-            rule_cache.get(&qname)
-        } else {
-            None
-        };
-        
-        // 3. 查询 Domain Cache（第三优先级）
-        if upstream_info.is_none() {
-            if let Some(cache) = &self.domain_cache {
-                if let Some(cached_response) = cache.get(&qname) {
-                    debug!("Domain Cache 命中: {}", qname);
-                    return Ok(cached_response);
+        // 2. 查询 Rule Cache（按域名深度匹配）+ Domain Cache（复合KEY查询）
+        if let Some(rule_cache) = &self.rule_cache {
+            if let Some(domain_cache) = &self.domain_cache {
+                // 按深度查询所有匹配的 match domain
+                let matches = rule_cache.get_matches_by_depth(&qname);
+                
+                // 遍历匹配项，用复合KEY查询 domain cache
+                for (match_domain, upstream, cache_id) in matches {
+                    if let Some(cached_response) = domain_cache.get_by_key(
+                        &cache_id, 
+                        &match_domain, 
+                        &upstream, 
+                        &qname
+                    ) {
+                        info!("缓存命中: {} -> {} [KEY: {}|{}|{}]", 
+                            qname, upstream, cache_id, match_domain, upstream);
+                        return Ok(cached_response);
+                    }
                 }
             }
         }
         
-        // 4. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
-        let (_upstream_list, rule_name, matched_domain, upstream_list_name, upstream_cache_id, response) = if let Some((cached_upstream, cached_cache_id)) = upstream_info {
-            // Rule Cache 命中，直接使用缓存的上游
-            let upstream_list = self.config.upstreams.get(&cached_upstream)
-                .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
-            let response = self.forward_to_upstream_list(request, upstream_list).await?;
-            (upstream_list, format!("cached:{}", cached_upstream), String::new(), cached_upstream, cached_cache_id, response)
+        // 3. 根据域名匹配规则选择上游（缓存未命中时）
+        let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
+        
+        // 从 rule_name 中提取 upstream_name
+        // rule_name 格式: "group:matched_domain@upstream" 或 "servers:upstream" 或 "final:..."
+        let upstream_list_name = if rule_name.contains('@') {
+            // 格式: "group:matched_domain@upstream" -> 提取 @ 后的部分
+            rule_name.split('@').last().unwrap_or(&rule_name).to_string()
         } else {
-            // Rule Cache 未命中，执行规则匹配
-            let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
-            // 从 rule_name 中提取 upstream_name
-            // rule_name 格式: "group:matched_domain@upstream" 或 "servers:upstream" 或 "cached:upstream"
-            let upstream_list_name = if rule_name.contains('@') {
-                // 格式: "group:matched_domain@upstream" -> 提取 @ 后的部分
-                rule_name.split('@').last().unwrap_or(&rule_name).to_string()
-            } else {
-                // 格式: "servers:upstream" 或 "cached:upstream" -> 提取 : 后的部分
-                self.extract_upstream_name(&rule_name)
-            };
-            // cache_id 默认为 upstream_list_name
-            let cache_id = upstream_list_name.clone();
-            (upstream_list, rule_name, matched_domain, upstream_list_name, cache_id, response)
+            // 格式: "servers:upstream" 或 "final:..." -> 提取 : 后的部分
+            self.extract_upstream_name(&rule_name)
         };
         
-        // 5. 写入 Rule Cache
+        // cache_id 默认为 upstream_list_name
+        let cache_id = upstream_list_name.clone();
+        
+        // 4. 写入 Rule Cache
+        // Rule Cache 存储: match_domain -> (upstream_name, cache_id)
+        // 注意：servers 规则和 final 规则不参与缓存
+        if let Some(rule_cache) = &self.rule_cache {
+            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
+                let match_domain_for_cache = if matched_domain.is_empty() { 
+                    ".".to_string()  // 未匹配到具体域名，使用根域名
+                } else { 
+                    matched_domain.clone() 
+                };
+                rule_cache.insert(match_domain_for_cache, upstream_list_name.clone(), cache_id.clone());
+            }
+        }
+        
+        // 5. 写入 Domain Cache
+        // 注意：servers 规则和 final 规则不参与缓存
+        if let Some(cache) = &self.domain_cache {
+            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
+                // 从响应中提取最小 TTL
+                let ttl = self.extract_min_ttl(&response);
+                // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
+                let match_domain_str = if matched_domain.is_empty() { ".".to_string() } else { matched_domain.clone() };
+                cache.insert(
+                    qname.clone(),
+                    cache_id.clone(),
+                    match_domain_str,
+                    upstream_list_name.clone(),
+                    response.clone(),
+                    ttl
+                );
+            }
+        }
+        
+        // 记录响应结果
+        let answer_count = response.answers().len();
+        info!("响应: {} -> {} [规则: {}, 答案数: {}]", qname, upstream_list_name, rule_name, answer_count);
+        
+        Ok(response)
         // Rule Cache 存储: qname -> (upstream_name, cache_id)（上游名称，不是匹配域名）
         // 注意：servers 规则和 final 规则不参与缓存
         if let Some(rule_cache) = &self.rule_cache {
