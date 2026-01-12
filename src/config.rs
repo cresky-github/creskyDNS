@@ -133,6 +133,8 @@ pub enum CacheType {
     Rule,
     /// 域名缓存（记录DNS解析结果）
     Domain,
+    /// 禁用缓存
+    Disable,
 }
 
 fn default_cache_interval() -> String { "5m".to_string() }
@@ -142,8 +144,9 @@ fn default_cache_interval() -> String { "5m".to_string() }
 pub struct CacheConfig {
     /// 缓存类型
     pub r#type: CacheType,
-    /// 缓存条目数量
-    pub size: usize,
+    /// 缓存条目数量（disable 类型不需要）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<usize>,
     /// 最小缓存时间（秒，仅对 domain 类型有效）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_ttl: Option<u64>,

@@ -54,8 +54,12 @@ async fn main() -> Result<()> {
     
     // 显示所有缓存配置
     for (id, cache_config) in &config.cache {
-        info!("缓存 '{}' 配置: 大小={}, min_ttl={:?}, max_ttl={:?}",
-              id, cache_config.size, cache_config.min_ttl, cache_config.max_ttl);
+        if cache_config.r#type == config::CacheType::Disable {
+            info!("缓存 '{}': 已禁用", id);
+        } else {
+            info!("缓存 '{}' 配置: 类型={:?}, 大小={:?}, min_ttl={:?}, max_ttl={:?}",
+                  id, cache_config.r#type, cache_config.size, cache_config.min_ttl, cache_config.max_ttl);
+        }
     }
 
     // 显示所有域名列表

@@ -86,6 +86,7 @@ impl DomainCache {
     /// 从配置创建 Domain Cache
     pub fn from_config(config: &CacheConfig, cache_id: String) -> Self {
         let cache = Arc::new(RwLock::new(HashMap::new()));
+        let size = config.size.unwrap_or(10000); // 默认 10000
         
         // 如果配置了输出文件且启用了冷启动，尝试加载
         if let Some(ref output_path) = config.output {
@@ -98,13 +99,13 @@ impl DomainCache {
         
         info!(
             "创建 Domain Cache '{}': size={}, min_ttl={:?}, max_ttl={:?}, output={:?}",
-            cache_id, config.size, config.min_ttl, config.max_ttl, config.output
+            cache_id, size, config.min_ttl, config.max_ttl, config.output
         );
         
         Self {
             cache,
             cache_id,
-            max_size: config.size,
+            max_size: size,
             min_ttl: config.min_ttl,
             max_ttl: config.max_ttl,
             output_path: config.output.clone(),
@@ -707,18 +708,36 @@ impl CacheManager {
         
         for (name, config) in cache_configs {
             match config.r#type {
+                CacheType::Disable => {
+                    if name == "disable" {
+                        info!("缓存已禁用: 检测到 'disable' 配置");
+                        // 返回空的缓存管理器
+                        return Ok(Self {
+                            rule_cache: None,
+                            domain_caches: HashMap::new(),
+                        });
+                    } else {
+                        warn!("ignore cache config '{}': type is disable", name);
+                    }
+                }
                 CacheType::Rule => {
                     if name == "rule" {
-                        rule_cache = Some(Arc::new(RuleCache::from_config(config, default_upstream.clone())));
-                        info!("已初始化规则缓存 '{}', 容量: {}", name, config.size);
+                        let size = config.size.ok_or_else(|| anyhow::anyhow!("规则缓存 '{}' 缺少 size 字段", name))?;
+                        let mut rule_config = config.clone();
+                        rule_config.size = Some(size);
+                        rule_cache = Some(Arc::new(RuleCache::from_config(&rule_config, default_upstream.clone())));
+                        info!("已初始化规则缓存 '{}', 容量: {}", name, size);
                     } else {
                         warn!("忽略规则缓存配置 '{}': 规则缓存名称必须为 'rule'", name);
                     }
                 }
                 CacheType::Domain => {
-                    domain_caches.insert(name.clone(), Arc::new(DomainCache::from_config(config, name.clone())));
+                    let size = config.size.ok_or_else(|| anyhow::anyhow!("域名缓存 '{}' 缺少 size 字段", name))?;
+                    let mut domain_config = config.clone();
+                    domain_config.size = Some(size);
+                    domain_caches.insert(name.clone(), Arc::new(DomainCache::from_config(&domain_config, name.clone())));
                     info!("已初始化域名缓存 '{}', 容量: {}, min_ttl: {:?}, max_ttl: {:?}", 
-                        name, config.size, config.min_ttl, config.max_ttl);
+                        name, size, config.min_ttl, config.max_ttl);
                 }
             }
         }
