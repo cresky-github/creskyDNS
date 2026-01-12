@@ -31,10 +31,11 @@ cache:
     type: rule
     size: 10000
     output: "./output/cache/rule.cache.txt"  # 可选，缓存输出文件
-    cold_start:                              # 可选，冷启动配置
-      enabled: true                          # 启用冷启动
-      timeout: 5000                          # 超时时间（毫秒）
-      parallel: 10                           # 并发查询数
+    interval: 5m                              # 可选，导出间隔（默认 5m）
+    cold_start:                               # 可选，冷启动配置
+      enabled: true                           # 启用冷启动
+      timeout: 5000                           # 超时时间（毫秒）
+      parallel: 10                            # 并发查询数
 
   domain:
     type: domain
@@ -42,10 +43,11 @@ cache:
     min_ttl: 60
     max_ttl: 86400
     output: "./output/cache/domain.cache.txt"  # 可选，缓存输出文件
-    cold_start:                               # 可选，冷启动配置
-      enabled: true                           # 启用冷启动
-      timeout: 5000                           # 超时时间（毫秒）
-      parallel: 10                            # 并发查询数
+    interval: 5m                               # 可选，导出间隔（默认 5m）
+    cold_start:                                # 可选，冷启动配置
+      enabled: true                            # 启用冷启动
+      timeout: 5000                            # 超时时间（毫秒）
+      parallel: 10                             # 并发查询数
 
   test:
     type: domain
@@ -53,6 +55,7 @@ cache:
     min_ttl: 60
     max_ttl: 86400
     output: "./output/cache/test.cache.txt"  # 可选，缓存输出文件
+    interval: 10m                             # 可选，导出间隔（默认 5m）
 
 # 4) 上游 DNS（引用上述缓存）
 upstreams:

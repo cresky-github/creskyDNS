@@ -135,6 +135,8 @@ pub enum CacheType {
     Domain,
 }
 
+fn default_cache_interval() -> String { "5m".to_string() }
+
 /// 缓存配置
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CacheConfig {
@@ -154,6 +156,9 @@ pub struct CacheConfig {
     /// 冷启动配置（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cold_start: Option<ColdStartConfig>,
+    /// 导出间隔（如 5m, 1h），归零时保存到文件
+    #[serde(default = "default_cache_interval")]
+    pub interval: String,
 }
 
 /// Final 规则配置
@@ -246,6 +251,7 @@ impl Default for Config {
             max_ttl: None,
             output: Some("./output/cache/rule.cache.txt".to_string()),
             cold_start: None,
+            interval: "5m".to_string(),
         });
         cache.insert("domain".to_string(), CacheConfig {
             r#type: CacheType::Domain,
@@ -254,6 +260,7 @@ impl Default for Config {
             max_ttl: Some(86400),
             output: Some("./output/cache/domain.cache.txt".to_string()),
             cold_start: None,
+            interval: "5m".to_string(),
         });
 
         Self {
@@ -270,6 +277,33 @@ impl Default for Config {
 }
 
 impl Config {
+    /// 解析时间间隔字符串（如 "5m", "1h", "30s"）为秒数
+    pub fn parse_interval(interval: &str) -> Result<u64> {
+        let interval = interval.trim();
+        if interval.is_empty() {
+            return Ok(300); // 默认 5 分钟
+        }
+        
+        let (num_str, unit) = if let Some(pos) = interval.find(|c: char| c.is_alphabetic()) {
+            (&interval[..pos], &interval[pos..])
+        } else {
+            (interval, "s") // 默认单位为秒
+        };
+        
+        let num: u64 = num_str.parse()
+            .map_err(|_| anyhow::anyhow!("无效的时间间隔数字: {}", num_str))?;
+        
+        let seconds = match unit.to_lowercase().as_str() {
+            "s" | "sec" | "second" | "seconds" => num,
+            "m" | "min" | "minute" | "minutes" => num * 60,
+            "h" | "hour" | "hours" => num * 3600,
+            "d" | "day" | "days" => num * 86400,
+            _ => return Err(anyhow::anyhow!("无效的时间单位: {}", unit)),
+        };
+        
+        Ok(seconds)
+    }
+    
     /// 验证监听器端口配置
     pub fn validate_listener_ports(&self) -> Result<()> {
         use tracing::{warn, error};

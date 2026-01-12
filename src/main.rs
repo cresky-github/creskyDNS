@@ -131,17 +131,30 @@ async fn main() -> Result<()> {
         cache_manager.get_domain_cache("domain"), // 使用 "domain" 缓存作为默认
     )?);
 
-    // 启动缓存清理和导出任务（每 60 秒）
-    let cache_manager_for_cleanup = Arc::clone(&cache_manager);
-    tokio::spawn(async move {
-        loop {
-            sleep(Duration::from_secs(60)).await;
-            cache_manager_for_cleanup.cleanup_all_expired();
-            if let Err(e) = cache_manager_for_cleanup.export_all() {
-                error!("导出缓存失败: {}", e);
+    // 启动缓存清理和导出任务（根据配置的 interval）
+    for (cache_name, cache_config) in &config.cache {
+        let interval_secs = Config::parse_interval(&cache_config.interval)
+            .unwrap_or(300); // 默认 5 分钟
+        info!("缓存 '{}' 导出间隔: {} 秒", cache_name, interval_secs);
+        
+        let cache_manager_clone = Arc::clone(&cache_manager);
+        let cache_name_clone = cache_name.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(interval_secs)).await;
+                
+                // 清理过期缓存
+                cache_manager_clone.cleanup_all_expired();
+                
+                // 导出缓存
+                if let Err(e) = cache_manager_clone.export_all() {
+                    error!("导出缓存 '{}' 失败: {}", cache_name_clone, e);
+                } else {
+                    debug!("缓存 '{}' 已导出", cache_name_clone);
+                }
             }
-        }
-    });
+        });
+    }
 
     // 启动域名列表重新加载监视任务
     let reload_config = config.clone();
