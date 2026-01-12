@@ -224,15 +224,15 @@ impl Default for Config {
 
         let mut upstreams = HashMap::new();
         upstreams.insert("direct_dns".to_string(), UpstreamList {
-            addresses: vec!["udp://8.8.8.8:53".to_string()],
+            addr: vec!["udp://8.8.8.8:53".to_string()],
             proxy: None,
         });
         upstreams.insert("proxy_dns".to_string(), UpstreamList {
-            addresses: vec!["udp://1.1.1.1:53".to_string()],
+            addr: vec!["udp://1.1.1.1:53".to_string()],
             proxy: None,
         });
         upstreams.insert("default_dns".to_string(), UpstreamList {
-            addresses: vec!["udp://223.5.5.5:53".to_string()],
+            addr: vec!["udp://223.5.5.5:53".to_string()],
             proxy: None,
         });
 
@@ -249,7 +249,7 @@ impl Default for Config {
         let mut cache = HashMap::new();
         cache.insert("rule".to_string(), CacheConfig {
             r#type: CacheType::Rule,
-            size: 10000,
+            size: Some(10000),
             min_ttl: None,
             max_ttl: None,
             output: Some("./output/cache/rule.cache.txt".to_string()),
@@ -258,7 +258,7 @@ impl Default for Config {
         });
         cache.insert("domain".to_string(), CacheConfig {
             r#type: CacheType::Domain,
-            size: 10000,
+            size: Some(10000),
             min_ttl: Some(60),
             max_ttl: Some(86400),
             output: Some("./output/cache/domain.cache.txt".to_string()),
