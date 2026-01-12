@@ -957,18 +957,23 @@ impl DnsForwarder {
             
             debug!("[DoH] TLS 握手完成，SNI: {}", sni_domain);
             
-            // 构建 HTTP/1.1 请求
+            // 构建 HTTP/1.1 请求（添加完整的标准 headers）
             let request_line = format!("GET {}?dns={} HTTP/1.1\r\n", path, dns_query);
             let headers = format!(
-                "Host: {}\r\nAccept: application/dns-message\r\nConnection: close\r\n\r\n",
+                "Host: {}\r\n\
+                 Accept: application/dns-message\r\n\
+                 User-Agent: creskyDNS/0.1.1\r\n\
+                 Connection: close\r\n\
+                 \r\n",
                 sni_domain
             );
             let http_request = format!("{}{}", request_line, headers);
             
             debug!("[DoH] 发送 HTTP 请求: GET {}?dns=...", path);
             
-            // 发送 HTTP 请求
+            // 发送 HTTP 请求并确保发送完成
             tls_stream.write_all(http_request.as_bytes()).await?;
+            tls_stream.flush().await?;
             
             // 读取 HTTP 响应
             let mut response_data = Vec::new();
