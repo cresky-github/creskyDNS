@@ -980,27 +980,31 @@ impl DnsForwarder {
             
             debug!("[DoH] 收到响应，大小: {} 字节", response_data.len());
             
-            // 解析 HTTP 响应
-            let response_str = String::from_utf8_lossy(&response_data);
-            let parts: Vec<&str> = response_str.splitn(2, "\r\n\r\n").collect();
+            // 解析 HTTP 响应（在字节级别分割 header 和 body）
+            let header_separator = b"\r\n\r\n";
+            let body_start = response_data
+                .windows(header_separator.len())
+                .position(|window| window == header_separator)
+                .ok_or_else(|| anyhow::anyhow!("无效的 HTTP 响应格式：未找到 header 分隔符"))?
+                + header_separator.len();
             
-            if parts.len() < 2 {
-                anyhow::bail!("无效的 HTTP 响应格式");
-            }
-            
-            let header_part = parts[0];
-            let body_part = parts[1];
+            // 提取 header（用于状态码检查）
+            let header_bytes = &response_data[..body_start - header_separator.len()];
+            let header_str = String::from_utf8_lossy(header_bytes);
             
             // 检查 HTTP 状态码
-            let status_line = header_part.lines().next()
+            let status_line = header_str.lines().next()
                 .ok_or_else(|| anyhow::anyhow!("缺少 HTTP 状态行"))?;
             
             if !status_line.contains("200") {
                 anyhow::bail!("DoH 请求失败: {}", status_line);
             }
             
-            // 解析 DNS 响应
-            let message = Message::from_vec(body_part.as_bytes())?;
+            // 提取 body（二进制数据）
+            let body_bytes = &response_data[body_start..];
+            
+            // 解析 DNS 响应（直接从二进制数据）
+            let message = Message::from_vec(body_bytes)?;
             
             debug!("DoH 收到来自 {} 的响应", upstream_addr);
             Ok(message)
