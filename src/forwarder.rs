@@ -20,6 +20,7 @@ pub enum Protocol {
     Doh,   // DNS over HTTPS
     Doq,   // DNS over QUIC
     H3,    // HTTP/3 (用于 DoH3)
+    Rcode(u16), // 特殊协议：返回指定的 RCODE（如 rcode://3 返回 NXDOMAIN）
 }
 
 /// DNS 转发器
@@ -498,6 +499,11 @@ impl DnsForwarder {
         let protocol = Self::parse_protocol(upstream_addr)?;
         
         match protocol {
+            Protocol::Rcode(rcode) => {
+                // 特殊协议：直接返回指定的 RCODE 响应
+                debug!("使用 rcode 协议返回 RCODE: {}", rcode);
+                Ok(Self::create_rcode_response(request, rcode))
+            }
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
             Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.proxy.as_ref()).await,
@@ -510,7 +516,20 @@ impl DnsForwarder {
 
     /// 解析协议类型
     fn parse_protocol(addr: &str) -> Result<Protocol> {
-        if addr.starts_with("h3://") {
+        if addr.starts_with("rcode://") {
+            // 格式：rcode://0-65535 或 rcode://NXDOMAIN
+            let rcode_str = addr.strip_prefix("rcode://").unwrap_or("3");
+            let rcode = match rcode_str.to_uppercase().as_str() {
+                "NOERROR" => 0,
+                "FORMERR" => 1,
+                "SERVFAIL" => 2,
+                "NXDOMAIN" => 3,
+                "NOTIMP" => 4,
+                "REFUSED" => 5,
+                _ => rcode_str.parse::<u16>().unwrap_or(3), // 默认 NXDOMAIN
+            };
+            Ok(Protocol::Rcode(rcode))
+        } else if addr.starts_with("h3://") {
             Ok(Protocol::H3)
         } else if addr.starts_with("https3://") {
             Ok(Protocol::H3)
@@ -530,6 +549,54 @@ impl DnsForwarder {
             // 默认当作UDP处理
             Ok(Protocol::Udp)
         }
+    }
+    
+    /// 创建指定 RCODE 的响应
+    /// 
+    /// RCODE 常用值：
+    /// - 0: NOERROR (成功，但无数据返回)
+    /// - 1: FORMERR (格式错误)
+    /// - 2: SERVFAIL (服务器失败)
+    /// - 3: NXDOMAIN (域名不存在)
+    /// - 4: NOTIMP (未实现)
+    /// - 5: REFUSED (拒绝查询)
+    fn create_rcode_response(request: &Message, rcode: u16) -> Message {
+        use hickory_proto::op::{ResponseCode, Header, MessageType};
+        
+        let mut response = Message::new();
+        let mut header = Header::new();
+        
+        // 复制请求的 ID
+        header.set_id(request.id());
+        header.set_message_type(MessageType::Response);
+        header.set_op_code(request.op_code());
+        
+        // 设置响应代码
+        let response_code = match rcode {
+            0 => ResponseCode::NoError,
+            1 => ResponseCode::FormErr,
+            2 => ResponseCode::ServFail,
+            3 => ResponseCode::NXDomain,
+            4 => ResponseCode::NotImp,
+            5 => ResponseCode::Refused,
+            _ => ResponseCode::ServFail, // 未知代码默认为 ServFail
+        };
+        header.set_response_code(response_code);
+        
+        // 设置标志
+        header.set_authoritative(false);
+        header.set_recursion_desired(request.recursion_desired());
+        header.set_recursion_available(true);
+        
+        response.set_header(header);
+        
+        // 复制查询部分
+        for query in request.queries() {
+            response.add_query(query.clone());
+        }
+        
+        debug!("创建 RCODE {} 响应: {}", rcode, response_code);
+        response
     }
 
     /// UDP 转发
