@@ -11,6 +11,8 @@ use base64;
 use std::sync::Arc;
 use rustls::ClientConfig;
 use reqwest::Url;
+use std::collections::HashSet;
+use tokio::sync::RwLock;
 
 /// DNS 协议类型
 #[derive(Clone, Debug)]
@@ -28,12 +30,19 @@ pub struct DnsForwarder {
     config: Config,
     rule_cache: Option<Arc<RuleCache>>,
     domain_cache: Option<Arc<DomainCache>>,
+    /// 不支持 HTTP/1.1 Bootstrap 的 DoH 提供商域名缓存
+    h2_only_domains: Arc<RwLock<HashSet<String>>>,
 }
 
 impl DnsForwarder {
     /// 创建新的 DNS 转发器
     pub fn new(config: Config, rule_cache: Option<Arc<RuleCache>>, domain_cache: Option<Arc<DomainCache>>) -> Result<Self> {
-        Ok(Self { config, rule_cache, domain_cache })
+        Ok(Self { 
+            config, 
+            rule_cache, 
+            domain_cache,
+            h2_only_domains: Arc::new(RwLock::new(HashSet::new())),
+        })
     }
 
     /// 解析上游服务器地址
@@ -888,18 +897,26 @@ impl DnsForwarder {
             (domain, port, path)
         };
         
-        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名并获取 IP 地址
+        // 检查该域名是否在 HTTP/2 only 缓存中
+        let use_h2_only = self.h2_only_domains.read().await.contains(&domain);
+        
+        // 如果配置了 bootstrap DNS 且该域名不在 HTTP/2 only 列表中，使用 bootstrap 解析域名并获取 IP 地址
         let (target_host, original_domain) = if let Some(bootstrap_servers) = bootstrap {
-            match self.resolve_with_bootstrap(&domain, bootstrap_servers).await {
-                Ok(ips) => {
-                    let ip = ips.first()
-                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    debug!("[Bootstrap] DoH 服务器 {} -> IP: {}", domain, ip);
-                    (ip.clone(), Some(domain.clone())) // 返回 IP 和原始域名
-                }
-                Err(e) => {
-                    warn!("Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
-                    (domain.clone(), None) // 使用域名连接，无需特殊处理
+            if use_h2_only {
+                debug!("[DoH] 域名 {} 已知仅支持 HTTP/2，跳过 Bootstrap 模式", domain);
+                (domain.clone(), None) // 直接使用标准模式
+            } else {
+                match self.resolve_with_bootstrap(&domain, bootstrap_servers).await {
+                    Ok(ips) => {
+                        let ip = ips.first()
+                            .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                        debug!("[Bootstrap] DoH 服务器 {} -> IP: {}", domain, ip);
+                        (ip.clone(), Some(domain.clone())) // 返回 IP 和原始域名
+                    }
+                    Err(e) => {
+                        warn!("Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                        (domain.clone(), None) // 使用域名连接，无需特殊处理
+                    }
                 }
             }
         } else {
@@ -1056,6 +1073,10 @@ impl DnsForwarder {
             if !status_line.contains("200") {
                 // Bootstrap 模式失败（如 400 错误），回退到标准模式
                 warn!("[DoH] Bootstrap 模式失败: {}，回退到标准模式 (HTTP/2)", status_line);
+                
+                // 将该域名加入 HTTP/2 only 缓存
+                self.h2_only_domains.write().await.insert(sni_domain.clone());
+                info!("[DoH] 已将 {} 标记为仅支持 HTTP/2，后续查询将跳过 Bootstrap 模式", sni_domain);
                 
                 let client = reqwest::Client::builder()
                     .timeout(timeout)
