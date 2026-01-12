@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     
     // 显示所有缓存配置
     for (id, cache_config) in &config.cache {
-        if cache_config.r#type == config::CacheType::Disable {
+        if cache_config.r#type == config::CacheType::Cache {
             info!("缓存 '{}': 已禁用", id);
         } else {
             info!("缓存 '{}' 配置: 类型={:?}, 大小={:?}, min_ttl={:?}, max_ttl={:?}",

@@ -708,16 +708,16 @@ impl CacheManager {
         
         for (name, config) in cache_configs {
             match config.r#type {
-                CacheType::Disable => {
+                CacheType::Cache => {
                     if name == "disable" {
-                        info!("缓存已禁用: 检测到 'disable' 配置");
+                        info!("缓存已禁用: 检测到 'disable' 配置 (type: cache)");
                         // 返回空的缓存管理器
                         return Ok(Self {
                             rule_cache: None,
                             domain_caches: HashMap::new(),
                         });
                     } else {
-                        warn!("ignore cache config '{}': type is disable", name);
+                        warn!("ignore cache config '{}': type is cache (reserved for disable)", name);
                     }
                 }
                 CacheType::Rule => {

@@ -133,8 +133,8 @@ pub enum CacheType {
     Rule,
     /// 域名缓存（记录DNS解析结果）
     Domain,
-    /// 禁用缓存
-    Disable,
+    /// 禁用缓存（特殊配置：ID 为 "disable"，type 为 "cache"）
+    Cache,
 }
 
 fn default_cache_interval() -> String { "5m".to_string() }
