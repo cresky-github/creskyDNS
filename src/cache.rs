@@ -514,7 +514,7 @@ impl RuleCache {
         }
         
         // 后缀匹配：qname 以 .match_domain 结尾
-        if qname.ends_with(&format!(".", match_domain)) {
+        if qname.ends_with(&format!(".{}", match_domain)) {
             return true;
         }
         

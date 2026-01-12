@@ -203,38 +203,6 @@ impl DnsForwarder {
         info!("响应: {} -> {} [规则: {}, 答案数: {}]", qname, upstream_list_name, rule_name, answer_count);
         
         Ok(response)
-        // Rule Cache 存储: qname -> (upstream_name, cache_id)（上游名称，不是匹配域名）
-        // 注意：servers 规则和 final 规则不参与缓存
-        if let Some(rule_cache) = &self.rule_cache {
-            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
-                rule_cache.insert(qname.clone(), upstream_list_name.clone(), upstream_cache_id.clone());
-            }
-        }
-        
-        // 6. 写入 Domain Cache
-        // 注意：servers 规则和 final 规则不参与缓存
-        if let Some(cache) = &self.domain_cache {
-            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
-                // 从响应中提取最小 TTL
-                let ttl = self.extract_min_ttl(&response);
-                // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
-                let match_domain_str = if matched_domain.is_empty() { qname.clone() } else { matched_domain.clone() };
-                cache.insert(
-                    qname.clone(),
-                    upstream_cache_id.clone(),
-                    match_domain_str,
-                    upstream_list_name.clone(),
-                    response.clone(),
-                    ttl
-                );
-            }
-        }
-        
-        // 记录响应结果
-        let answer_count = response.answers().len();
-        info!("响应: {} -> {} [规则: {}, 答案数: {}]", qname, upstream_list_name, rule_name, answer_count);
-        
-        Ok(response)
     }
 
     /// 根据域名匹配规则（返回 upstream 和规则名称）
