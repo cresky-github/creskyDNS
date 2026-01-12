@@ -119,6 +119,9 @@ async fn main() -> Result<()> {
         }
     }
 
+    // 创建缓存管理器引用（稍后初始化）
+    let cache_manager_for_reload: Arc<RwLock<Option<Arc<CacheManager>>>> = Arc::new(RwLock::new(None));
+
     // 获取默认上游服务器（YAML 顺序最后一个）
     let default_upstream = config.upstreams.keys().last()
         .cloned()
@@ -127,6 +130,12 @@ async fn main() -> Result<()> {
     // 初始化缓存管理器
     let cache_manager = Arc::new(CacheManager::new(&config.cache, default_upstream)?);
     info!("缓存管理器已初始化");
+    
+    // 将缓存管理器保存到共享引用中
+    {
+        let mut cm = cache_manager_for_reload.write().unwrap();
+        *cm = Some(Arc::clone(&cache_manager));
+    }
     
     // 执行冷启动流程（如果启用）
     let warm_up_list = cache_manager.cold_start(&config).await?;
@@ -188,8 +197,9 @@ async fn main() -> Result<()> {
     let reload_config = config.clone();
     let reload_lists = Arc::clone(&domain_lists);
     let reload_states_clone = Arc::clone(&reload_states);
+    let reload_cache_manager = Arc::clone(&cache_manager_for_reload);
     let reload_handle = tokio::spawn(async move {
-        monitor_domain_list_reload(reload_config, reload_lists, reload_states_clone).await;
+        monitor_domain_list_reload(reload_config, reload_lists, reload_states_clone, reload_cache_manager).await;
     });
 
     // 为每个监听器启动处理任务
@@ -222,6 +232,7 @@ async fn monitor_domain_list_reload(
     config: Config,
     domain_lists: Arc<RwLock<HashMap<String, Vec<String>>>>,
     reload_states: Arc<Mutex<HashMap<String, DomainListReloadState>>>,
+    cache_manager: Arc<RwLock<Option<Arc<CacheManager>>>>,
 ) {
     // 每 5 秒检查一次是否需要重新加载
     let check_interval = Duration::from_secs(5);
@@ -282,7 +293,27 @@ async fn monitor_domain_list_reload(
         drop(states);
         
         if lists_updated {
-            info!("域名列表已更新，重新加载完成");
+            info!("域名列表已更新，开始验证缓存有效性...");
+            
+            // 获取缓存管理器并执行验证（类似冷启动机制）
+            let cm_opt = cache_manager.read().unwrap();
+            if let Some(ref cm) = *cm_opt {
+                match cm.validate_on_reload(&config).await {
+                    Ok((valid_count, invalid_count)) => {
+                        if invalid_count > 0 {
+                            info!("缓存验证完成: 保留 {} 条有效缓存，删除 {} 条无效缓存", 
+                                  valid_count, invalid_count);
+                        } else {
+                            info!("缓存验证完成: 所有 {} 条缓存均有效", valid_count);
+                        }
+                    }
+                    Err(e) => {
+                        error!("缓存验证失败: {}", e);
+                    }
+                }
+            }
+            
+            info!("域名列表已更新，缓存验证完成");
         }
     }
 }

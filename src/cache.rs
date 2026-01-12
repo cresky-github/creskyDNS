@@ -840,6 +840,64 @@ impl CacheManager {
         Ok(all_warm_up_list)
     }
     
+    /// 在 reload 时验证缓存有效性（不清空缓存，只删除无效项）
+    /// 返回 (有效记录数, 无效记录数)
+    pub async fn validate_on_reload(
+        &self,
+        config: &Config,
+    ) -> Result<(usize, usize)> {
+        info!("Reload: 开始验证缓存有效性...");
+        let mut total_valid = 0;
+        let mut total_invalid = 0;
+        
+        // 验证 rule.cache
+        if let Some(ref rule_cache) = self.rule_cache {
+            info!("Reload: 验证 Rule Cache...");
+            
+            // 构建域名列表映射
+            let mut lists = HashMap::new();
+            for (list_name, list_config) in &config.lists {
+                lists.insert(list_name.clone(), list_config.domains.clone());
+            }
+            
+            // 验证 rule.cache
+            let (valid_entries, invalid_count) = rule_cache.validate_against_rules(&config.rules, &lists);
+            
+            total_valid += valid_entries.len();
+            total_invalid += invalid_count;
+            
+            if invalid_count > 0 {
+                info!("Reload: Rule Cache 移除了 {} 条无效条目", invalid_count);
+                // 重建 rule.cache（保留有效条目）
+                rule_cache.rebuild_from_validated(valid_entries.clone());
+            } else {
+                info!("Reload: Rule Cache 所有 {} 条记录均有效", valid_entries.len());
+            }
+            
+            // 使用有效的 rule.cache 验证所有 domain.cache
+            for (cache_name, domain_cache) in &self.domain_caches {
+                info!("Reload: 验证 Domain Cache '{}'...", cache_name);
+                
+                let (valid_records, invalid_count, _warm_up_list) = 
+                    domain_cache.validate_against_rule_cache(&valid_entries);
+                
+                total_valid += valid_records.len();
+                total_invalid += invalid_count;
+                
+                if invalid_count > 0 {
+                    info!("Reload: Domain Cache '{}' 移除了 {} 条无效条目", cache_name, invalid_count);
+                } else {
+                    info!("Reload: Domain Cache '{}' 所有 {} 条记录均有效", cache_name, valid_records.len());
+                }
+            }
+        } else {
+            warn!("Reload: 未配置 Rule Cache，跳过验证");
+        }
+        
+        info!("Reload: 缓存验证完成，有效: {}, 无效: {}", total_valid, total_invalid);
+        Ok((total_valid, total_invalid))
+    }
+    
     /// 获取所有缓存的统计信息
     pub fn stats_all(&self) -> String {
         let mut stats = String::new();
