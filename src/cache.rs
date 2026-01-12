@@ -5,10 +5,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use anyhow::Result;
+use indexmap::IndexMap;
 
-use crate::config::{CacheConfig, CacheType};
+use crate::config::{CacheConfig, CacheType, Config};
 
 /// DNS 缓存记录
 #[derive(Clone, Debug)]
@@ -292,6 +293,44 @@ impl DomainCache {
         }
     }
     
+    /// 验证 domain.cache 条目是否有对应的有效 rule.cache 条目
+    /// 返回: (valid_records, invalid_count, warm_up_list)
+    pub fn validate_against_rule_cache(
+        &self,
+        valid_rule_entries: &[(String, String, String)],
+    ) -> (Vec<CachedDnsRecord>, usize, Vec<(String, String, String, String)>) {
+        let cache = self.cache.read().unwrap();
+        let mut valid_records = Vec::new();
+        let mut invalid_count = 0;
+        let mut warm_up_list = Vec::new();
+        
+        // 构建有效的 rule.cache 键集合
+        let mut valid_keys = std::collections::HashSet::new();
+        for (match_domain, upstream, _cache_id) in valid_rule_entries {
+            valid_keys.insert((match_domain.clone(), upstream.clone()));
+        }
+        
+        for (domain, record) in cache.iter() {
+            let key = (record.matched_domain.clone(), record.upstream.clone());
+            
+            if valid_keys.contains(&key) {
+                // 记录有效，但需要预热（重新查询）
+                valid_records.push(record.clone());
+                warm_up_list.push((
+                    domain.clone(),
+                    record.matched_domain.clone(),
+                    record.upstream.clone(),
+                    record.cache_id.clone(),
+                ));
+            } else {
+                invalid_count += 1;
+                debug!("Domain Cache '{}' 冷启动验证: 移除无效条目 {} (规则不存在)", self.cache_id, domain);
+            }
+        }
+        
+        (valid_records, invalid_count, warm_up_list)
+    }
+    
     /// 导出缓存到文件
     pub fn export_to_file(&self) -> Result<()> {
         if let Some(ref output_path) = self.output_path {
@@ -536,6 +575,70 @@ impl RuleCache {
         info!("Rule Cache 已清空: {} 条记录", count);
     }
     
+    /// 验证 rule.cache 条目是否符合当前 rules 配置
+    /// 返回: (valid_entries, invalid_count)
+    pub fn validate_against_rules(
+        &self,
+        rules: &IndexMap<String, Vec<String>>,
+        lists: &HashMap<String, Vec<String>>,
+    ) -> (Vec<(String, String, String)>, usize) {
+        let cache = self.cache.read().unwrap();
+        let mut valid_entries = Vec::new();
+        let mut invalid_count = 0;
+        
+        for (match_domain, (upstream, cache_id)) in cache.iter() {
+            // 验证逻辑：检查 match_domain 是否在任何规则组的域名列表中
+            let mut is_valid = false;
+            
+            // 跳过 servers 和 final 规则组
+            for (group_name, list_names) in rules.iter() {
+                if group_name == "servers" || group_name == "final" {
+                    continue;
+                }
+                
+                // 检查此规则组的所有列表
+                for list_name in list_names {
+                    if let Some(domains) = lists.get(list_name) {
+                        if domains.iter().any(|d| d == match_domain || match_domain.ends_with(&format!(".{}", d))) {
+                            is_valid = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if is_valid {
+                    break;
+                }
+            }
+            
+            // 根域名 "." 始终有效
+            if match_domain == "." {
+                is_valid = true;
+            }
+            
+            if is_valid {
+                valid_entries.push((match_domain.clone(), upstream.clone(), cache_id.clone()));
+            } else {
+                invalid_count += 1;
+                debug!("Rule Cache 冷启动验证: 移除无效条目 {} -> {}", match_domain, upstream);
+            }
+        }
+        
+        (valid_entries, invalid_count)
+    }
+    
+    /// 使用验证后的条目重新构建缓存
+    pub fn rebuild_from_validated(&self, valid_entries: Vec<(String, String, String)>) {
+        let mut cache = self.cache.write().unwrap();
+        cache.clear();
+        
+        for (match_domain, upstream, cache_id) in valid_entries {
+            cache.insert(match_domain, (upstream, cache_id));
+        }
+        
+        info!("Rule Cache 冷启动: 重建完成，共 {} 条有效记录", cache.len());
+    }
+    
     /// 导出缓存到文件
     pub fn export_to_file(&self) -> Result<()> {
         if let Some(ref output_path) = self.output_path {
@@ -644,6 +747,67 @@ impl CacheManager {
         for cache in self.domain_caches.values() {
             cache.cleanup_expired();
         }
+    }
+    
+    /// 执行冷启动流程
+    /// 1. 加载并验证 rule.cache
+    /// 2. 使用有效的 rule.cache 验证 domain.cache
+    /// 3. 返回需要预热的域名列表
+    pub async fn cold_start(
+        &self,
+        config: &Config,
+    ) -> Result<Vec<(String, String, String, String)>> {
+        info!("开始缓存冷启动流程...");
+        let mut all_warm_up_list = Vec::new();
+        
+        // 第1步：处理 rule.cache
+        if let Some(ref rule_cache) = self.rule_cache {
+            info!("冷启动: 验证 Rule Cache...");
+            
+            // 构建域名列表映射
+            let mut lists = HashMap::new();
+            for (list_name, list_config) in &config.lists {
+                lists.insert(list_name.clone(), list_config.domains.clone());
+            }
+            
+            // 验证 rule.cache
+            let (valid_entries, invalid_count) = rule_cache.validate_against_rules(&config.rules, &lists);
+            
+            if invalid_count > 0 {
+                warn!("冷启动: Rule Cache 移除了 {} 条无效条目", invalid_count);
+            }
+            
+            if valid_entries.is_empty() {
+                info!("冷启动: Rule Cache 无有效条目，跳过");
+            } else {
+                info!("冷启动: Rule Cache 验证完成，保留 {} 条有效记录", valid_entries.len());
+                
+                // 重建 rule.cache
+                rule_cache.rebuild_from_validated(valid_entries.clone());
+                
+                // 第2步：使用有效的 rule.cache 验证所有 domain.cache
+                for (cache_name, domain_cache) in &self.domain_caches {
+                    info!("冷启动: 验证 Domain Cache '{}'...", cache_name);
+                    
+                    let (_valid_records, invalid_count, warm_up_list) = 
+                        domain_cache.validate_against_rule_cache(&valid_entries);
+                    
+                    if invalid_count > 0 {
+                        warn!("冷启动: Domain Cache '{}' 移除了 {} 条无效条目", cache_name, invalid_count);
+                    }
+                    
+                    info!("冷启动: Domain Cache '{}' 验证完成，{} 个域名需要预热", 
+                        cache_name, warm_up_list.len());
+                    
+                    all_warm_up_list.extend(warm_up_list);
+                }
+            }
+        } else {
+            warn!("冷启动: 未配置 Rule Cache，跳过验证");
+        }
+        
+        info!("缓存冷启动验证完成，共 {} 个域名需要预热", all_warm_up_list.len());
+        Ok(all_warm_up_list)
     }
     
     /// 获取所有缓存的统计信息

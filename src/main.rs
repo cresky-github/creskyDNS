@@ -123,14 +123,38 @@ async fn main() -> Result<()> {
     // 初始化缓存管理器
     let cache_manager = Arc::new(CacheManager::new(&config.cache, default_upstream)?);
     info!("缓存管理器已初始化");
-
-    // 创建转发器
+    
+    // 执行冷启动流程（如果启用）
+    let warm_up_list = cache_manager.cold_start(&config).await?;
+    
+    // 创建转发器（在冷启动之后）
     let forwarder = Arc::new(DnsForwarder::new(
         config.clone(),
         cache_manager.get_rule_cache(),
         cache_manager.get_domain_cache("domain"), // 使用 "domain" 缓存作为默认
     )?);
-
+    
+    // 执行预热查询（如果有需要预热的域名）
+    if !warm_up_list.is_empty() {
+        info!("开始预热查询: {} 个域名", warm_up_list.len());
+        
+        // 读取冷启动配置
+        let cold_start_config = config.cache.get("rule")
+            .and_then(|c| c.cold_start.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        
+        if cold_start_config.enabled {
+            let forwarder_clone = Arc::clone(&forwarder);
+            tokio::spawn(async move {
+                warm_up_queries(forwarder_clone, warm_up_list, &cold_start_config).await;
+            });
+        } else {
+            info!("冷启动预热已禁用，跳过预热查询");
+        }
+    } else {
+        info!("无需预热的域名");
+    }
     // 启动缓存清理和导出任务（根据配置的 interval）
     for (cache_name, cache_config) in &config.cache {
         let interval_secs = Config::parse_interval(&cache_config.interval)
@@ -519,6 +543,84 @@ fn print_help() {
     println!("  3. 当前目录下的 config.yaml, config.yml, config.json");
     println!("  4. ./etc/creskyDNS.yaml");
     println!("  5. 使用内置默认配置");
+}
+
+/// 预热查询：对冷启动加载的域名进行实际 DNS 查询
+async fn warm_up_queries(
+    forwarder: Arc<DnsForwarder>,
+    warm_up_list: Vec<(String, String, String, String)>,
+    cold_start_config: &config::ColdStartConfig,
+) {
+    use hickory_proto::op::{Message, Query, OpCode};
+    use hickory_proto::rr::{Name, RecordType};
+    use std::str::FromStr;
+    use futures::stream::{self, StreamExt};
+    
+    let total = warm_up_list.len();
+    let parallel = cold_start_config.parallel;
+    let timeout_ms = cold_start_config.timeout;
+    
+    info!("预热查询: {} 个域名，并发数: {}, 超时: {}ms", total, parallel, timeout_ms);
+    
+    let mut success = 0;
+    let mut failed = 0;
+    
+    // 使用并发流处理
+    let results = stream::iter(warm_up_list)
+        .map(|(qname, _match_domain, _upstream, _cache_id)| {
+            let forwarder = Arc::clone(&forwarder);
+            let qname = qname.clone();
+            async move {
+                // 构造 DNS 查询
+                let domain_name = match Name::from_str(&format!("{}.", &qname)) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        error!("预热查询: 域名格式错误 '{}': {}", qname, e);
+                        return Err(());
+                    }
+                };
+                
+                let mut request = Message::new();
+                request.set_id(rand::random());
+                request.set_op_code(OpCode::Query);
+                request.set_recursion_desired(true);
+                request.add_query(Query::query(domain_name, RecordType::A));
+                
+                // 执行查询（带超时）
+                let query_result = tokio::time::timeout(
+                    Duration::from_millis(timeout_ms),
+                    forwarder.forward(&request, None)
+                ).await;
+                
+                match query_result {
+                    Ok(Ok(_response)) => {
+                        debug!("预热查询成功: {}", qname);
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        debug!("预热查询失败: {} - {}", qname, e);
+                        Err(())
+                    }
+                    Err(_) => {
+                        debug!("预热查询超时: {}", qname);
+                        Err(())
+                    }
+                }
+            }
+        })
+        .buffer_unordered(parallel)
+        .collect::<Vec<_>>()
+        .await;
+    
+    // 统计结果
+    for result in results {
+        match result {
+            Ok(_) => success += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    
+    info!("预热查询完成: 成功 {}/{}, 失败 {}", success, total, failed);
 }
 
 /// 加载配置文件
