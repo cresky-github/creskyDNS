@@ -579,7 +579,7 @@ impl RuleCache {
     /// 返回: (valid_entries, invalid_count)
     pub fn validate_against_rules(
         &self,
-        rules: &IndexMap<String, Vec<String>>,
+        _rules: &IndexMap<String, Vec<String>>,
         lists: &HashMap<String, Vec<String>>,
     ) -> (Vec<(String, String, String)>, usize) {
         let cache = self.cache.read().unwrap();
@@ -594,20 +594,29 @@ impl RuleCache {
                 continue;
             }
             
-            // 验证逻辑：检查 match_domain 是否在任何规则组的域名列表中
+            // 验证逻辑：检查 match_domain 是否能被任何 rule.group (servers, final 除外) 决策到
             let mut is_valid = false;
             
-            // 跳过 servers 和 final 规则组
+            // 遍历所有规则组
             for (group_name, list_names) in rules.iter() {
+                // 跳过 servers 和 final 规则组
                 if group_name == "servers" || group_name == "final" {
                     continue;
                 }
                 
-                // 检查此规则组的所有列表
+                // 检查此规则组引用的所有列表
                 for list_name in list_names {
                     if let Some(domains) = lists.get(list_name) {
-                        if domains.iter().any(|d| d == match_domain || match_domain.ends_with(&format!(".{}", d))) {
-                            is_valid = true;
+                        // 检查 match_domain 是否在列表中或是列表中某个域名的子域名
+                        for list_domain in domains {
+                            if match_domain == list_domain || match_domain.ends_with(&format!(".{}", list_domain)) {
+                                is_valid = true;
+                                debug!("Rule Cache 冷启动验证: {} 匹配规则组 '{}' 的列表 '{}' 中的域名 '{}'", 
+                                    match_domain, group_name, list_name, list_domain);
+                                break;
+                            }
+                        }
+                        if is_valid {
                             break;
                         }
                     }
@@ -622,7 +631,7 @@ impl RuleCache {
                 valid_entries.push((match_domain.clone(), upstream.clone(), cache_id.clone()));
             } else {
                 invalid_count += 1;
-                debug!("Rule Cache 冷启动验证: 移除无效条目 {} -> {}", match_domain, upstream);
+                debug!("Rule Cache 冷启动验证: 移除无效条目 {} -> {} (不在任何规则组中)", match_domain, upstream);
             }
         }
         
