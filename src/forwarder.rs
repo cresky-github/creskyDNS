@@ -346,6 +346,12 @@ impl DnsForwarder {
             // 在每个规则组内找到最优匹配
             if let Some((upstream_list, matched_domain)) = self.find_best_match_in_group(domain, rules) {
                 debug!("域名 {} 在规则组 '{}' 中匹配到上游 '{}', 匹配域名: {}", domain, group_name, upstream_list, matched_domain);
+                
+                // 记录命中（servers 规则组除外）
+                if group_name != "servers" {
+                    self.record_hit(domain, &upstream_list, &matched_domain);
+                }
+                
                 let upstream = self.config.upstreams.get(&upstream_list)
                     .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", upstream_list))?;
                 let rule_name = format!("{}:{}", group_name, upstream_list);
@@ -1022,6 +1028,64 @@ impl DnsForwarder {
                 (ip_bits & mask) == (net_bits & mask)
             }
             _ => false,
+        }
+    }
+    
+    /// 记录域名命中到 .hit. 文件
+    /// 规则：
+    /// 1. 如果列表路径已包含 ".hit." 则不记录
+    /// 2. servers 和 final 规则组不记录（由调用方保证）
+    /// 3. 文件名格式：<list_name>.hit.txt
+    fn record_hit(&self, domain: &str, list_name: &str, _matched_domain: &str) {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::path::Path;
+        
+        // 获取列表配置
+        let list = match self.config.lists.get(list_name) {
+            Some(l) => l,
+            None => {
+                debug!("记录命中失败: 列表 '{}' 不存在", list_name);
+                return;
+            }
+        };
+        
+        // 检查路径是否已包含 ".hit."
+        if let Some(ref path) = list.path {
+            if path.contains(".hit.") {
+                debug!("跳过记录命中: 列表 '{}' 路径已包含 .hit.", list_name);
+                return;
+            }
+        }
+        
+        // 生成 hit 文件路径
+        let hit_path = if let Some(ref path) = list.path {
+            // 基于原文件路径生成 .hit.txt 文件
+            let path_obj = Path::new(path);
+            let parent = path_obj.parent().unwrap_or(Path::new("."));
+            let stem = path_obj.file_stem().unwrap_or_default().to_string_lossy();
+            parent.join(format!("{}.hit.txt", stem)).to_string_lossy().to_string()
+        } else {
+            // 如果没有 path，使用列表名称
+            format!("./{}.hit.txt", list_name)
+        };
+        
+        // 追加写入域名（每行一个）
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&hit_path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = writeln!(file, "{}", domain) {
+                    warn!("写入命中文件 {} 失败: {}", hit_path, e);
+                } else {
+                    debug!("记录命中: {} -> {}", domain, hit_path);
+                }
+            }
+            Err(e) => {
+                warn!("打开命中文件 {} 失败: {}", hit_path, e);
+            }
         }
     }
 }

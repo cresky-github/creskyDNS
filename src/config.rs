@@ -27,6 +27,9 @@ pub struct DomainList {
     /// 重新加载间隔（秒）：0 表示文件改变立即加载，>0 表示间隔期间无视文件改变
     #[serde(default)]
     pub interval: u64,
+    /// 命中记录文件路径（由程序自动生成，不在配置文件中）
+    #[serde(skip)]
+    pub hit_path: Option<String>,
 }
 
 /// 域名列表重新加载状态
