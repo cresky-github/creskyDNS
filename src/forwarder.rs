@@ -761,6 +761,10 @@ impl DnsForwarder {
         let server_name = host.as_str().try_into()
             .map_err(|_| anyhow::anyhow!("无效的服务器名称"))?;
         
+        if bootstrap.is_some() {
+            debug!("[DoT] 使用 IP 连接，设置 SNI: {}", host);
+        }
+        
         let connector = tokio_rustls::TlsConnector::from(client_config);
         let mut tls_stream = connector.connect(server_name, stream).await?;
         
@@ -1009,7 +1013,11 @@ impl DnsForwarder {
         )?;
         endpoint.set_default_client_config(client_config);
 
-        // 连接到 QUIC 服务器
+        // 连接到 QUIC 服务器（使用原始域名作为 SNI）
+        if bootstrap.is_some() {
+            debug!("[DoQ] 使用 IP {} 连接，设置 SNI: {}", resolved_host, host);
+        }
+        
         let connection = endpoint
             .connect(socket_addr, &host)?
             .await
@@ -1135,8 +1143,9 @@ impl DnsForwarder {
             .header("Accept", "application/dns-message")
             .header("User-Agent", "creskyDNS/h3");
 
-        // 如果使用了 IP 地址，设置 Host header
+        // 如果使用了 bootstrap（IP 地址），必须设置 Host 头以保持 SNI 和虚拟主机正确
         if let Some(original_host) = host_header {
+            debug!("H3 设置 Host 头: {}", original_host);
             request_builder = request_builder.header("Host", original_host);
         }
 
