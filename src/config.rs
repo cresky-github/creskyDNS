@@ -471,14 +471,17 @@ impl DomainList {
     /// 从文件加载 IP CIDR 列表（自动转换为大写）
     /// 
     /// 格式：|CIDR|country_code|
+    /// 支持 IPv4 和 IPv6 地址
     /// 示例：
     /// ```text
     /// |39.156.0.0/16|CN|
-    /// |1.1.1.0/24|US|  # 这是注释
+    /// |1.1.1.0/24|US|  # IPv4 示例
+    /// |2001:db8::/32|CN|  # IPv6 示例
+    /// |2a00:1450::/32|US|  # IPv6 示例
     /// ```
     /// 
     /// 规则：
-    /// - 每行 # 之前的内容转换为大写
+    /// - 每行 # 之前的内容转换为大写（包括 IPv6 十六进制字母）
     /// - # 之后的注释不转换
     pub fn from_ipcidr_file(path: &str) -> Result<Vec<String>> {
         let content = fs::read_to_string(path)?;
