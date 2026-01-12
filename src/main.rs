@@ -589,7 +589,7 @@ async fn warm_up_queries(
                 // 执行查询（带超时）
                 let query_result = tokio::time::timeout(
                     Duration::from_millis(timeout_ms),
-                    forwarder.forward(&request, None)
+                    forwarder.as_ref().forward(&request, None)
                 ).await;
                 
                 match query_result {

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 use anyhow::Result;
 use indexmap::IndexMap;
 
@@ -579,7 +579,7 @@ impl RuleCache {
     /// 返回: (valid_entries, invalid_count)
     pub fn validate_against_rules(
         &self,
-        _rules: &IndexMap<String, Vec<String>>,
+        rules: &IndexMap<String, Vec<String>>,
         lists: &HashMap<String, Vec<String>>,
     ) -> (Vec<(String, String, String)>, usize) {
         let cache = self.cache.read().unwrap();

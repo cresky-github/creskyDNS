@@ -150,7 +150,7 @@ impl DnsForwarder {
         }
         
         // 3. 根据域名匹配规则选择上游（缓存未命中时）
-        let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
+        let (_upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
         
         // 从 rule_name 中提取 upstream_name
         // rule_name 格式: "group:matched_domain@upstream" 或 "servers:upstream" 或 "final:..."
