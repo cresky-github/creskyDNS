@@ -240,57 +240,61 @@ async fn monitor_domain_list_reload(
     loop {
         sleep(check_interval).await;
         
-        let mut states = reload_states.lock().unwrap();
-        let mut lists_updated = false;
-        
-        for (name, list) in &config.lists {
-            if list.path.is_none() {
-                continue;  // 跳过没有文件路径的列表
-            }
+        // 使用块作用域确保 MutexGuard 在 await 之前释放
+        let lists_updated = {
+            let mut states = reload_states.lock().unwrap();
+            let mut updated = false;
             
-            let state = states.entry(name.clone()).or_insert_with(|| {
-                DomainListReloadState {
-                    last_modified: 0,
-                    last_loaded: 0,
-                    pending_update: false,
+            for (name, list) in &config.lists {
+                if list.path.is_none() {
+                    continue;  // 跳过没有文件路径的列表
                 }
-            });
-            
-            // 检查是否需要重新加载
-            if list.should_reload(state) {
-                // 创建一个可变的副本来重新加载
-                let mut list_copy = list.clone();
                 
-                match list_copy.load_sync() {
-                    Ok(_) => {
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        
-                        let modified = list_copy.get_file_modified_time().unwrap_or(0);
-                        
-                        // 更新共享的域名列表
-                        {
-                            let mut lists = domain_lists.write().unwrap();
-                            lists.insert(name.clone(), list_copy.domains.clone());
-                        }
-                        
-                        state.last_modified = modified;
-                        state.last_loaded = now;
-                        state.pending_update = false;
-                        lists_updated = true;
-                        
-                        info!("域名列表 '{}' 已重新加载: {} 个域名", 
-                              name, list_copy.domains.len());
+                let state = states.entry(name.clone()).or_insert_with(|| {
+                    DomainListReloadState {
+                        last_modified: 0,
+                        last_loaded: 0,
+                        pending_update: false,
                     }
-                    Err(e) => {
-                        error!("域名列表 '{}' 重新加载失败: {}", name, e);
+                });
+                
+                // 检查是否需要重新加载
+                if list.should_reload(state) {
+                    // 创建一个可变的副本来重新加载
+                    let mut list_copy = list.clone();
+                    
+                    match list_copy.load_sync() {
+                        Ok(_) => {
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            
+                            let modified = list_copy.get_file_modified_time().unwrap_or(0);
+                            
+                            // 更新共享的域名列表
+                            {
+                                let mut lists = domain_lists.write().unwrap();
+                                lists.insert(name.clone(), list_copy.domains.clone());
+                            }
+                            
+                            state.last_modified = modified;
+                            state.last_loaded = now;
+                            state.pending_update = false;
+                            updated = true;
+                            
+                            info!("域名列表 '{}' 已重新加载: {} 个域名", 
+                                  name, list_copy.domains.len());
+                        }
+                        Err(e) => {
+                            error!("域名列表 '{}' 重新加载失败: {}", name, e);
+                        }
                     }
                 }
             }
-        }
-        drop(states);
+            
+            updated
+        }; // MutexGuard 在这里释放
         
         if lists_updated {
             info!("域名列表已更新，开始验证缓存有效性...");
