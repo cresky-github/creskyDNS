@@ -784,8 +784,6 @@ impl DnsForwarder {
         use hickory_proto::rr::{Name, RecordType, RData};
         use std::str::FromStr;
         
-        let timeout = Duration::from_secs(self.config.timeout_secs);
-        
         // 尝试每个 bootstrap DNS 服务器
         for bootstrap_addr in bootstrap_servers {
             debug!("使用 bootstrap DNS {} 解析域名: {}", bootstrap_addr, domain);
@@ -806,7 +804,7 @@ impl DnsForwarder {
             request.add_query(Query::query(domain_name, RecordType::A));
             
             // 使用 UDP 查询 bootstrap DNS
-            let result = match self.forward_udp(&request, bootstrap_addr).await {
+            match self.forward_udp(&request, bootstrap_addr).await {
                 Ok(response) => {
                     // 提取 A 记录中的 IP 地址
                     let mut ips = Vec::new();
@@ -828,7 +826,7 @@ impl DnsForwarder {
                     warn!("Bootstrap DNS {} 查询失败: {}", bootstrap_addr, e);
                     continue;
                 }
-            };
+            }
         }
         
         anyhow::bail!("所有 Bootstrap DNS 服务器都无法解析域名: {}", domain)

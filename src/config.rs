@@ -234,15 +234,21 @@ impl Default for Config {
         let mut upstreams = HashMap::new();
         upstreams.insert("direct_dns".to_string(), UpstreamList {
             addr: vec!["udp://8.8.8.8:53".to_string()],
+            bootstrap: None,
             proxy: None,
+            cache: None,
         });
         upstreams.insert("proxy_dns".to_string(), UpstreamList {
             addr: vec!["udp://1.1.1.1:53".to_string()],
+            bootstrap: None,
             proxy: None,
+            cache: None,
         });
         upstreams.insert("default_dns".to_string(), UpstreamList {
             addr: vec!["udp://223.5.5.5:53".to_string()],
+            bootstrap: None,
             proxy: None,
+            cache: None,
         });
 
         let mut rules = IndexMap::new();
