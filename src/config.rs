@@ -98,15 +98,62 @@ impl Default for LogConfig {
     }
 }
 
+/// 冷启动配置
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ColdStartConfig {
+    /// 是否启用冷启动
+    #[serde(default)]
+    pub enabled: bool,
+    /// 超时时间（毫秒）
+    #[serde(default = "default_cold_start_timeout")]
+    pub timeout: u64,
+    /// 并发查询数
+    #[serde(default = "default_cold_start_parallel")]
+    pub parallel: usize,
+}
+
+fn default_cold_start_timeout() -> u64 { 5000 }
+fn default_cold_start_parallel() -> usize { 10 }
+
+impl Default for ColdStartConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout: default_cold_start_timeout(),
+            parallel: default_cold_start_parallel(),
+        }
+    }
+}
+
+/// 缓存类型
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheType {
+    /// 规则缓存（记录域名匹配到的上游）
+    Rule,
+    /// 域名缓存（记录DNS解析结果）
+    Domain,
+}
+
 /// 缓存配置
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CacheConfig {
+    /// 缓存类型
+    pub r#type: CacheType,
     /// 缓存条目数量
     pub size: usize,
-    /// 最小缓存时间（秒，可选）
+    /// 最小缓存时间（秒，仅对 domain 类型有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_ttl: Option<u64>,
-    /// 最大缓存时间（秒，可选）
+    /// 最大缓存时间（秒，仅对 domain 类型有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_ttl: Option<u64>,
+    /// 缓存输出文件（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// 冷启动配置（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cold_start: Option<ColdStartConfig>,
 }
 
 /// Final 规则配置
@@ -192,10 +239,21 @@ impl Default for Config {
         listener.insert("backup".to_string(), 5354);
 
         let mut cache = HashMap::new();
-        cache.insert("default".to_string(), CacheConfig {
-            size: 1000,
+        cache.insert("rule".to_string(), CacheConfig {
+            r#type: CacheType::Rule,
+            size: 10000,
             min_ttl: None,
             max_ttl: None,
+            output: Some("./output/cache/rule.cache.txt".to_string()),
+            cold_start: None,
+        });
+        cache.insert("domain".to_string(), CacheConfig {
+            r#type: CacheType::Domain,
+            size: 10000,
+            min_ttl: Some(60),
+            max_ttl: Some(86400),
+            output: Some("./output/cache/domain.cache.txt".to_string()),
+            cold_start: None,
         });
 
         Self {

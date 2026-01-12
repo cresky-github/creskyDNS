@@ -128,18 +128,14 @@ impl DnsForwarder {
         }
         
         // 2. 查询 Rule Cache（第二优先级）
-        let upstream_name = if let Some(rule_cache) = &self.rule_cache {
-            if let Some(cached_upstream) = rule_cache.get(&qname) {
-                Some(cached_upstream)
-            } else {
-                None
-            }
+        let upstream_info = if let Some(rule_cache) = &self.rule_cache {
+            rule_cache.get(&qname)
         } else {
             None
         };
         
         // 3. 查询 Domain Cache（第三优先级）
-        if upstream_name.is_none() {
+        if upstream_info.is_none() {
             if let Some(cache) = &self.domain_cache {
                 if let Some(cached_response) = cache.get(&qname) {
                     debug!("Domain Cache 命中: {}", qname);
@@ -149,12 +145,12 @@ impl DnsForwarder {
         }
         
         // 4. 根据域名匹配规则选择上游（如果 Rule Cache 未命中）
-        let (_upstream_list, rule_name, matched_domain, upstream_list_name, response) = if let Some(cached_upstream) = upstream_name {
+        let (_upstream_list, rule_name, matched_domain, upstream_list_name, upstream_cache_id, response) = if let Some((cached_upstream, cached_cache_id)) = upstream_info {
             // Rule Cache 命中，直接使用缓存的上游
             let upstream_list = self.config.upstreams.get(&cached_upstream)
                 .ok_or_else(|| anyhow::anyhow!("上游列表 '{}' 未找到", cached_upstream))?;
             let response = self.forward_to_upstream_list(request, upstream_list).await?;
-            (upstream_list, format!("cached:{}", cached_upstream), String::new(), cached_upstream, response)
+            (upstream_list, format!("cached:{}", cached_upstream), String::new(), cached_upstream, cached_cache_id, response)
         } else {
             // Rule Cache 未命中，执行规则匹配
             let (upstream_list, rule_name, matched_domain, response) = self.match_domain(&qname, request, listener_name).await?;
@@ -167,27 +163,36 @@ impl DnsForwarder {
                 // 格式: "servers:upstream" 或 "cached:upstream" -> 提取 : 后的部分
                 self.extract_upstream_name(&rule_name)
             };
-            (upstream_list, rule_name, matched_domain, upstream_list_name, response)
+            // cache_id 默认为 upstream_list_name
+            let cache_id = upstream_list_name.clone();
+            (upstream_list, rule_name, matched_domain, upstream_list_name, cache_id, response)
         };
         
-        // 4. 写入 Rule Cache
-        // Rule Cache 存储: qname -> upstream_name（上游名称，不是匹配域名）
-        // 注意：servers 规则不参与缓存
+        // 5. 写入 Rule Cache
+        // Rule Cache 存储: qname -> (upstream_name, cache_id)（上游名称，不是匹配域名）
+        // 注意：servers 规则和 final 规则不参与缓存
         if let Some(rule_cache) = &self.rule_cache {
-            if !rule_name.starts_with("servers:") {
-                rule_cache.insert(qname.clone(), upstream_list_name.clone());
+            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
+                rule_cache.insert(qname.clone(), upstream_list_name.clone(), upstream_cache_id.clone());
             }
         }
         
-        // 5. 写入 Domain Cache
-        // 注意：servers 规则不参与缓存
+        // 6. 写入 Domain Cache
+        // 注意：servers 规则和 final 规则不参与缓存
         if let Some(cache) = &self.domain_cache {
-            if !rule_name.starts_with("servers:") {
+            if !rule_name.starts_with("servers:") && !rule_name.starts_with("final:") {
                 // 从响应中提取最小 TTL
                 let ttl = self.extract_min_ttl(&response);
                 // Domain Cache 使用匹配到的域名作为规则标识（链接到 rule.cache）
-                let cache_rule = if matched_domain.is_empty() { rule_name.clone() } else { matched_domain.clone() };
-                cache.insert(qname.clone(), cache_rule, response.clone(), ttl);
+                let match_domain_str = if matched_domain.is_empty() { qname.clone() } else { matched_domain.clone() };
+                cache.insert(
+                    qname.clone(),
+                    upstream_cache_id.clone(),
+                    match_domain_str,
+                    upstream_list_name.clone(),
+                    response.clone(),
+                    ttl
+                );
             }
         }
         

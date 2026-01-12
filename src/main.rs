@@ -17,7 +17,7 @@ mod log;
 
 use config::{Config, DomainListReloadState};
 use forwarder::DnsForwarder;
-use cache::{DomainCache, RuleCache};
+use cache::{CacheManager};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -115,37 +115,33 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 初始化 Rule Cache（内存规则缓存）
-    let rule_cache = RuleCache::new();
-    info!("Rule Cache 已启用");
-
-    // 初始化 Domain Cache
-    let domain_cache = if let Some(cache_config) = config.cache.get("default") {
-        let cache = DomainCache::new(
-            "default".to_string(),
-            cache_config.size,
-            cache_config.min_ttl,
-            cache_config.max_ttl,
-        );
-        info!("Domain Cache 已启用");
-        Some(cache)
-    } else {
-        info!("Domain Cache 未启用");
-        None
-    };
+    // 获取默认上游服务器（YAML 顺序最后一个）
+    let default_upstream = config.upstreams.keys().last()
+        .cloned()
+        .unwrap_or_else(|| "default".to_string());
+    
+    // 初始化缓存管理器
+    let cache_manager = Arc::new(CacheManager::new(&config.cache, default_upstream)?);
+    info!("缓存管理器已初始化");
 
     // 创建转发器
-    let forwarder = Arc::new(DnsForwarder::new(config.clone(), Some(rule_cache.clone()), domain_cache.clone())?);
+    let forwarder = Arc::new(DnsForwarder::new(
+        config.clone(),
+        cache_manager.get_rule_cache(),
+        cache_manager.get_domain_cache("domain"), // 使用 "domain" 缓存作为默认
+    )?);
 
-    // 启动缓存清理任务（每 60 秒清理一次过期记录）
-    if let Some(cache) = domain_cache {
-        tokio::spawn(async move {
-            loop {
-                sleep(Duration::from_secs(60)).await;
-                cache.cleanup_expired();
+    // 启动缓存清理和导出任务（每 60 秒）
+    let cache_manager_for_cleanup = Arc::clone(&cache_manager);
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(60)).await;
+            cache_manager_for_cleanup.cleanup_all_expired();
+            if let Err(e) = cache_manager_for_cleanup.export_all() {
+                error!("导出缓存失败: {}", e);
             }
-        });
-    }
+        }
+    });
 
     // 启动域名列表重新加载监视任务
     let reload_config = config.clone();

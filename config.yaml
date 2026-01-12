@@ -27,20 +27,32 @@ listener:
 
 # 3) 缓存（在上游前定义，便于复用）
 cache:
-  main:
+  rule:
+    type: rule
     size: 10000
-    min_ttl: 60
-    max_ttl: 86400
-    output: "./output/cache/main.cache.txt"  # 可选，缓存输出文件
+    output: "./output/cache/rule.cache.txt"  # 可选，缓存输出文件
     cold_start:                              # 可选，冷启动配置
       enabled: true                          # 启用冷启动
       timeout: 5000                          # 超时时间（毫秒）
       parallel: 10                           # 并发查询数
 
-  local:
-    size: 1000
-    min_ttl: 300
-    max_ttl: 604800
+  domain:
+    type: domain
+    size: 10000
+    min_ttl: 60
+    max_ttl: 86400
+    output: "./output/cache/domain.cache.txt"  # 可选，缓存输出文件
+    cold_start:                               # 可选，冷启动配置
+      enabled: true                           # 启用冷启动
+      timeout: 5000                           # 超时时间（毫秒）
+      parallel: 10                            # 并发查询数
+
+  test:
+    type: domain
+    size: 5000
+    min_ttl: 60
+    max_ttl: 86400
+    output: "./output/cache/test.cache.txt"  # 可选，缓存输出文件
 
 # 4) 上游 DNS（引用上述缓存）
 upstreams:
