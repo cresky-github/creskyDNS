@@ -980,13 +980,60 @@ impl DnsForwarder {
             tls_stream.write_all(http_request.as_bytes()).await?;
             tls_stream.flush().await?;
             
-            // 读取 HTTP 响应
+            // 读取 HTTP 响应头
             let mut response_data = Vec::new();
-            tokio::time::timeout(
-                timeout,
-                tls_stream.read_to_end(&mut response_data)
-            ).await
-            .map_err(|_| anyhow::anyhow!("读取响应超时"))??;
+            let mut buffer = [0u8; 4096];
+            
+            // 先读取响应头
+            loop {
+                let n = tokio::time::timeout(
+                    timeout,
+                    tls_stream.read(&mut buffer)
+                ).await
+                .map_err(|_| anyhow::anyhow!("读取响应超时"))??;
+                
+                if n == 0 {
+                    break;
+                }
+                
+                response_data.extend_from_slice(&buffer[..n]);
+                
+                // 检查是否已读取完整的 header
+                if response_data.windows(4).any(|w| w == b"\r\n\r\n") {
+                    // 读取完 header,解析 Content-Length
+                    let header_str = String::from_utf8_lossy(&response_data);
+                    
+                    // 查找 header 和 body 的分界点
+                    if let Some(header_end) = response_data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let body_start = header_end + 4;
+                        let header_part = &response_data[..header_end];
+                        let header_text = String::from_utf8_lossy(header_part);
+                        
+                        // 解析 Content-Length
+                        let mut content_length: Option<usize> = None;
+                        for line in header_text.lines() {
+                            if line.to_lowercase().starts_with("content-length:") {
+                                if let Some(len_str) = line.split(':').nth(1) {
+                                    content_length = len_str.trim().parse().ok();
+                                }
+                            }
+                        }
+                        
+                        // 如果有 Content-Length,读取剩余的 body
+                        if let Some(expected_len) = content_length {
+                            let current_body_len = response_data.len() - body_start;
+                            let remaining = expected_len.saturating_sub(current_body_len);
+                            
+                            if remaining > 0 {
+                                let mut body_buffer = vec![0u8; remaining];
+                                tls_stream.read_exact(&mut body_buffer).await?;
+                                response_data.extend_from_slice(&body_buffer);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
             
             debug!("[DoH] 收到响应，大小: {} 字节", response_data.len());
             
