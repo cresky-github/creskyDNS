@@ -1170,38 +1170,11 @@ impl DnsForwarder {
 
         // 从 URL 中提取域名和路径
         let parsed_url = Url::parse(&url)?;
-        let host = parsed_url.host_str()
+        let domain = parsed_url.host_str()
             .ok_or_else(|| anyhow::anyhow!("H3 URL 中没有主机名"))?
             .to_string();
         let port = parsed_url.port().unwrap_or(443);
         let path = parsed_url.path();
-        let scheme = parsed_url.scheme();
-
-        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名获取 IP
-        let (final_url, host_header) = if let Some(bootstrap_servers) = bootstrap {
-            match self.resolve_with_bootstrap(&host, bootstrap_servers).await {
-                Ok(ips) => {
-                    let ip = ips.first()
-                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
-                    debug!("[Bootstrap] H3 服务器 {} -> IP: {}", host, ip);
-                    
-                    // 使用 IP 构建 URL
-                    let new_url = if port != 443 {
-                        format!("{}://{}:{}{}", scheme, ip, port, path)
-                    } else {
-                        format!("{}://{}{}", scheme, ip, path)
-                    };
-                    (new_url, Some(host.clone()))
-                }
-                Err(e) => {
-                    warn!("H3 Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
-                    (url.clone(), None)
-                }
-            }
-        } else {
-            debug!("H3 未配置 bootstrap DNS，使用系统 DNS 解析");
-            (url.clone(), None)
-        };
 
         let timeout = Duration::from_secs(self.config.timeout_secs);
 
@@ -1211,39 +1184,162 @@ impl DnsForwarder {
         use base64::Engine;
         let dns_query = URL_SAFE_NO_PAD.encode(&request_data);
 
-        // 构建 H3 请求 (使用 reqwest 的 http3 特性如果可用，否则降级到 HTTPS)
-        let accept_invalid_certs: bool = host_header.is_some();
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .danger_accept_invalid_certs(accept_invalid_certs) // 如果使用 IP，接受无效证书
-            .build()?;
+        // 决定目标地址和 SNI
+        let (target_host, original_domain) = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(&domain, bootstrap_servers).await {
+                Ok(ips) => {
+                    let ip = ips.first()
+                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                    debug!("[Bootstrap] H3 服务器 {} -> IP: {}", domain, ip);
+                    (ip.clone(), Some(domain.clone()))
+                }
+                Err(e) => {
+                    warn!("H3 Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                    (domain.clone(), None)
+                }
+            }
+        } else {
+            (domain.clone(), None)
+        };
 
-        let mut request_builder = client
-            .get(&final_url)
-            .query(&[("dns", &dns_query)])
-            .header("Accept", "application/dns-message")
-            .header("User-Agent", "creskyDNS/h3");
+        // Bootstrap 模式：手动控制 QUIC/TLS SNI
+        if let Some(sni_domain) = original_domain {
+            debug!("[H3] Bootstrap 模式: 连接到 IP {} 并设置 SNI: {}", target_host, sni_domain);
+            
+            let socket_addr: SocketAddr = format!("{}:{}", target_host, port).parse()?;
+            
+            // 创建 QUIC 客户端配置
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.add_trust_anchors(
+                webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+                    rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                        ta.subject,
+                        ta.spki,
+                        ta.name_constraints,
+                    )
+                })
+            );
 
-        // 如果使用了 bootstrap（IP 地址），必须设置 Host 头以保持 SNI 和虚拟主机正确
-        if let Some(original_host) = host_header {
-            debug!("H3 设置 Host 头: {}", original_host);
-            request_builder = request_builder.header("Host", original_host);
+            let mut tls_config = rustls::ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            
+            tls_config.alpn_protocols = vec![b"h3".to_vec()];
+
+            let client_config = quinn::ClientConfig::new(Arc::new(tls_config));
+
+            let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+            socket.set_nonblocking(true)?;
+            let mut endpoint = quinn::Endpoint::new(
+                Default::default(),
+                None,
+                socket,
+                Arc::new(quinn::TokioRuntime),
+            )?;
+            endpoint.set_default_client_config(client_config);
+
+            // 连接到 QUIC 服务器，使用原始域名作为 SNI
+            debug!("[H3] QUIC 连接到 {} 并设置 SNI: {}", socket_addr, sni_domain);
+            let connection = endpoint
+                .connect(socket_addr, &sni_domain)?
+                .await
+                .map_err(|e| anyhow::anyhow!("H3 QUIC 连接失败: {}", e))?;
+
+            debug!("[H3] QUIC 连接建立成功，SNI: {}", sni_domain);
+
+            // 创建 H3 连接
+            let quinn_connection = h3_quinn::Connection::new(connection);
+            let (mut driver, mut send_request) = h3::client::new(quinn_connection)
+                .await
+                .map_err(|e| anyhow::anyhow!("H3 客户端创建失败: {}", e))?;
+
+            // 启动驱动任务
+            tokio::spawn(async move {
+                if let Err(e) = driver.wait_idle().await {
+                    debug!("H3 driver error: {}", e);
+                }
+            });
+
+            // 构建 HTTP/3 请求
+            let request_uri = format!("{}?dns={}", path, dns_query);
+            let req = http::Request::builder()
+                .method(http::Method::GET)
+                .uri(request_uri)
+                .header("Host", &sni_domain)
+                .header("Accept", "application/dns-message")
+                .header("User-Agent", "creskyDNS/h3")
+                .body(())
+                .map_err(|e| anyhow::anyhow!("构建 HTTP/3 请求失败: {}", e))?;
+
+            debug!("[H3] 发送 HTTP/3 请求: GET {}?dns=...", path);
+
+            // 发送请求
+            let mut stream = tokio::time::timeout(
+                timeout,
+                send_request.send_request(req)
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("H3 发送请求超时"))??;
+
+            stream.finish().await?;
+
+            // 接收响应
+            let response = tokio::time::timeout(
+                timeout,
+                stream.recv_response()
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("H3 接收响应超时"))??;
+
+            debug!("[H3] 收到响应状态: {}", response.status());
+
+            if response.status() != http::StatusCode::OK {
+                anyhow::bail!("H3 请求失败: HTTP {}", response.status());
+            }
+
+            // 读取响应体
+            let mut response_data = Vec::new();
+            while let Some(chunk) = tokio::time::timeout(timeout, stream.recv_data())
+                .await
+                .map_err(|_| anyhow::anyhow!("H3 读取数据超时"))??
+            {
+                response_data.extend_from_slice(&chunk);
+            }
+
+            debug!("[H3] 收到响应，大小: {} 字节", response_data.len());
+
+            // 解析 DNS 响应
+            let message = Message::from_vec(&response_data)?;
+            debug!("H3 收到来自 {} 的响应", upstream_addr);
+            Ok(message)
+        } else {
+            // 标准模式：使用 reqwest (会降级到 HTTPS)
+            debug!("[H3] 标准连接到 {}:{}", domain, port);
+            
+            let client = reqwest::Client::builder()
+                .timeout(timeout)
+                .use_rustls_tls()
+                .build()?;
+
+            let response = client
+                .get(&url)
+                .query(&[("dns", &dns_query)])
+                .header("Accept", "application/dns-message")
+                .header("User-Agent", "creskyDNS/h3")
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                anyhow::bail!("H3 请求失败: HTTP {}", response.status());
+            }
+
+            let response_data = response.bytes().await?;
+            let message = Message::from_vec(&response_data)?;
+            
+            debug!("H3 收到来自 {} 的响应", upstream_addr);
+            Ok(message)
         }
-
-        let response = tokio::time::timeout(
-            timeout,
-            request_builder.send()
-        ).await??;
-
-        if !response.status().is_success() {
-            anyhow::bail!("H3 请求失败: HTTP {}", response.status());
-        }
-
-        let response_data = response.bytes().await?;
-        let message = Message::from_vec(&response_data)?;
-        
-        debug!("H3 收到来自 {} 的响应", upstream_addr);
-        Ok(message)
     }
 
     /// 处理 Final 规则
