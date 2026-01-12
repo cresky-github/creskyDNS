@@ -111,7 +111,7 @@ impl DomainCache {
     }
     
     /// 从文件加载缓存
-    fn load_from_file(path: &str, cache: &Arc<RwLock<HashMap<String, CachedDnsRecord>>>, cache_id: &str) -> Result<()> {
+    fn load_from_file(path: &str, cache: &Arc<RwLock<HashMap<String, CachedDnsRecord>>>, _cache_id: &str) -> Result<()> {
         if !Path::new(path).exists() {
             return Ok(());
         }
@@ -137,7 +137,7 @@ impl DomainCache {
             
             // 创建简单的 DNS 消息（冷启动时只保存 IP 信息，不完整重建 Message）
             // 实际查询时会重新获取完整记录
-            let mut message = Message::new();
+            let message = Message::new();
             // TODO: 解析 IP 信息并重建 DNS 响应
             
             let record = CachedDnsRecord {

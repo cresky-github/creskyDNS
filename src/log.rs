@@ -60,7 +60,7 @@ impl RotatingFileWriter {
     /// 执行轮转
     fn rotate(&self) -> Result<()> {
         let mut file_guard = self.current_file.lock().unwrap();
-        let mut path_guard = self.current_path.lock().unwrap();
+        let path_guard = self.current_path.lock().unwrap();
         let mut bytes_guard = self.bytes_written.lock().unwrap();
 
         // 关闭当前文件
@@ -248,7 +248,7 @@ fn parse_log_line(line: &str) -> (String, String, &str) {
         let level = parts[idx].to_uppercase();
         
         // 查找冒号分隔的模块和消息
-        if let Some(colon_pos) = line.find(':') {
+        if let Some(_colon_pos) = line.find(':') {
             // 找到级别后的内容
             let after_level = &line[line.find(&parts[idx]).unwrap() + parts[idx].len()..];
             if let Some(module_end) = after_level.find(':') {

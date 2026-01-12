@@ -25,13 +25,13 @@ pub enum Protocol {
 /// DNS 转发器
 pub struct DnsForwarder {
     config: Config,
-    rule_cache: Option<RuleCache>,
-    domain_cache: Option<DomainCache>,
+    rule_cache: Option<Arc<RuleCache>>,
+    domain_cache: Option<Arc<DomainCache>>,
 }
 
 impl DnsForwarder {
     /// 创建新的 DNS 转发器
-    pub fn new(config: Config, rule_cache: Option<RuleCache>, domain_cache: Option<DomainCache>) -> Result<Self> {
+    pub fn new(config: Config, rule_cache: Option<Arc<RuleCache>>, domain_cache: Option<Arc<DomainCache>>) -> Result<Self> {
         Ok(Self { config, rule_cache, domain_cache })
     }
 
