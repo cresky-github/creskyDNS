@@ -506,7 +506,7 @@ impl DnsForwarder {
             }
             Protocol::Udp => self.forward_udp(request, upstream_addr).await,
             Protocol::Tcp => self.forward_tcp(request, upstream_addr).await,
-            Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.proxy.as_ref()).await,
+            Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.bootstrap.as_ref(), upstream_list.proxy.as_ref()).await,
             Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.bootstrap.as_ref(), upstream_list.proxy.as_ref()).await,
             // DoQ 基于 UDP，SOCKS5 代理主要支持 TCP，暂不支持
             Protocol::Doq => self.forward_doq(request, upstream_addr).await,
@@ -686,7 +686,7 @@ impl DnsForwarder {
 
     /// DoT (DNS over TLS) 转发
     /// DoT (DNS over TLS) 转发
-    async fn forward_dot(&self, request: &Message, upstream_addr: &str, proxy: Option<&String>) -> Result<Message> {
+    async fn forward_dot(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>, proxy: Option<&String>) -> Result<Message> {
         // 提取主机名和端口
         let addr_part = upstream_addr.strip_prefix("tls://")
             .ok_or_else(|| anyhow::anyhow!("无效的 DoT 地址"))?
@@ -699,8 +699,27 @@ impl DnsForwarder {
             (addr_part, 853) // DoT 默认端口
         };
 
+        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名获取 IP
+        let resolved_host = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(&host, bootstrap_servers).await {
+                Ok(ips) => {
+                    let ip = ips.first()
+                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                    debug!("DoT 使用 bootstrap 解析: {} -> {}", host, ip);
+                    ip.clone()
+                }
+                Err(e) => {
+                    warn!("DoT Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                    host.clone()
+                }
+            }
+        } else {
+            debug!("DoT 未配置 bootstrap DNS，使用系统 DNS 解析");
+            host.clone()
+        };
+
         let timeout = Duration::from_secs(self.config.timeout_secs);
-        let socket_addr = format!("{}:{}", host, port);
+        let socket_addr = format!("{}:{}", resolved_host, port);
 
         // 根据是否配置代理，选择连接方式
         let stream = if let Some(proxy_url) = proxy {
@@ -731,6 +750,7 @@ impl DnsForwarder {
                 .with_no_client_auth()
         );
 
+        // 使用原始主机名作为 SNI（即使连接的是 IP）
         let server_name = host.as_str().try_into()
             .map_err(|_| anyhow::anyhow!("无效的服务器名称"))?;
         
