@@ -37,7 +37,28 @@
   - 支持 SOCKS5 代理（如果配置）
 - [x] 调用位置：`src/forwarder.rs` 第 509 行
 
-### 5. 配置文件示例
+### 5. DoQ (DNS over QUIC) Bootstrap 支持
+- [x] `forward_doq` 方法支持 bootstrap 参数
+- [x] 位置：`src/forwarder.rs` 第 947-1025 行
+- [x] 实现细节：
+  - 从 doq:// 或 quic:// URL 中提取域名和端口
+  - 使用 bootstrap DNS 解析域名为 IP
+  - 使用 IP 进行 QUIC 连接
+  - 默认端口 784
+- [x] 调用位置：`src/forwarder.rs` 第 512 行
+
+### 6. H3 (DNS over HTTP/3) Bootstrap 支持
+- [x] `forward_h3` 方法支持 bootstrap 参数
+- [x] 位置：`src/forwarder.rs` 第 1066-1150 行
+- [x] 实现细节：
+  - 从 h3:// 或 https3:// URL 中提取域名
+  - 使用 bootstrap DNS 解析域名为 IP
+  - 将 URL 中的域名替换为 IP 进行连接
+  - 设置 Host header 保持正确的 SNI
+  - 使用 IP 连接时接受无效证书
+- [x] 调用位置：`src/forwarder.rs` 第 513 行
+
+### 7. 配置文件示例
 - [x] `config/config.example.yaml` 包含 bootstrap 配置示例
 - [x] 位置：第 80-110 行
 - [x] 示例：
@@ -55,13 +76,13 @@
       - "udp://1.1.1.1:53"
   ```
 
-### 6. 协议覆盖范围
+### 8. 协议覆盖范围
 - [x] UDP - 不需要 bootstrap（直接使用 IP）
 - [x] TCP - 不需要 bootstrap（直接使用 IP）
 - [x] DoH - ✅ 已实现 bootstrap 支持
 - [x] DoT - ✅ 已实现 bootstrap 支持
-- [x] DoQ - 基于 UDP，暂不支持 bootstrap
-- [x] H3 - 暂不支持 bootstrap
+- [x] DoQ - ✅ 已实现 bootstrap 支持
+- [x] H3 - ✅ 已实现 bootstrap 支持
 
 ## 🎯 实现目的
 
@@ -99,6 +120,29 @@ Bootstrap DNS 提供独立的 DNS 解析能力：
 5. TCP 连接 -> 8.8.8.8:853
 6. TLS 握手 -> SNI: dns.google
 7. DNS 查询 -> example.com
+8. 返回响应 -> example.com 的 IP
+```
+
+### DoQ Bootstrap 流程
+```
+1. 用户查询 -> example.com
+2. 选择上游 -> doq://dns.google:784
+3. 提取域名 -> dns.google
+4. Bootstrap 解析 -> dns.google -> 8.8.8.8
+5. QUIC 连接 -> 8.8.8.8:784
+6. DNS 查询 -> example.com
+7. 返回响应 -> example.com 的 IP
+```
+
+### H3 Bootstrap 流程
+```
+1. 用户查询 -> example.com
+2. 选择上游 -> h3://dns.google/dns-query
+3. 提取域名 -> dns.google
+4. Bootstrap 解析 -> dns.google -> 8.8.8.8
+5. 替换 URL -> https://8.8.8.8/dns-query
+6. 设置 Header -> Host: dns.google
+7. HTTP/3 请求 -> 使用 SNI: dns.google
 8. 返回响应 -> example.com 的 IP
 ```
 
@@ -148,6 +192,20 @@ upstreams:
       - "tls://1.1.1.1:853"
     bootstrap:
       - "udp://1.1.1.1:53"
+
+  # DoQ 支持 bootstrap
+  google_doq:
+    addr:
+      - "doq://dns.google:784"
+    bootstrap:
+      - "udp://8.8.8.8:53"
+
+  # H3 支持 bootstrap
+  cloudflare_h3:
+    addr:
+      - "h3://cloudflare-dns.com/dns-query"
+    bootstrap:
+      - "udp://1.1.1.1:53"
 ```
 
 ### 注意事项
@@ -167,11 +225,11 @@ upstreams:
 
 ## 🎉 结论
 
-Bootstrap DNS 实现已完整覆盖所有需要域名解析的协议（DoH 和 DoT）。实现包括：
+Bootstrap DNS 实现已完整覆盖所有需要域名解析的加密 DNS 协议（DoH、DoT、DoQ 和 H3）。实现包括：
 - ✅ 配置结构完整
 - ✅ 解析方法健壮
-- ✅ 协议集成完善
+- ✅ 协议集成完善（DoH、DoT、DoQ、H3）
 - ✅ 错误处理到位
 - ✅ 文档配置齐全
 
-**状态**：✅ Bootstrap 功能完全实现，可以正常使用！
+**状态**：✅ Bootstrap 功能完全实现，所有加密 DNS 协议均已支持！

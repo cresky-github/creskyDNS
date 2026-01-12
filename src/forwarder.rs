@@ -509,8 +509,8 @@ impl DnsForwarder {
             Protocol::Dot => self.forward_dot(request, upstream_addr, upstream_list.bootstrap.as_ref(), upstream_list.proxy.as_ref()).await,
             Protocol::Doh => self.forward_doh(request, upstream_addr, upstream_list.bootstrap.as_ref(), upstream_list.proxy.as_ref()).await,
             // DoQ 基于 UDP，SOCKS5 代理主要支持 TCP，暂不支持
-            Protocol::Doq => self.forward_doq(request, upstream_addr).await,
-            Protocol::H3 => self.forward_h3(request, upstream_addr).await,
+            Protocol::Doq => self.forward_doq(request, upstream_addr, upstream_list.bootstrap.as_ref()).await,
+            Protocol::H3 => self.forward_h3(request, upstream_addr, upstream_list.bootstrap.as_ref()).await,
         }
     }
 
@@ -944,7 +944,7 @@ impl DnsForwarder {
     }
 
     /// DoQ (DNS over QUIC) 转发
-    async fn forward_doq(&self, request: &Message, upstream_addr: &str) -> Result<Message> {
+    async fn forward_doq(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>) -> Result<Message> {
         // 提取主机名和端口
         let addr_part = upstream_addr.strip_prefix("doq://")
             .or_else(|| upstream_addr.strip_prefix("quic://"))
@@ -958,8 +958,27 @@ impl DnsForwarder {
             (addr_part, 784) // DoQ 默认端口
         };
 
+        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名获取 IP
+        let resolved_host = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(&host, bootstrap_servers).await {
+                Ok(ips) => {
+                    let ip = ips.first()
+                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                    debug!("DoQ 使用 bootstrap 解析: {} -> {}", host, ip);
+                    ip.clone()
+                }
+                Err(e) => {
+                    warn!("DoQ Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                    host.clone()
+                }
+            }
+        } else {
+            debug!("DoQ 未配置 bootstrap DNS，使用系统 DNS 解析");
+            host.clone()
+        };
+
         let timeout = Duration::from_secs(self.config.timeout_secs);
-        let socket_addr = format!("{}:{}", host, port).parse::<SocketAddr>()?;
+        let socket_addr = format!("{}:{}", resolved_host, port).parse::<SocketAddr>()?;
 
         // 创建 QUIC 客户端配置
         let client_config = quinn::ClientConfig::with_native_roots();
@@ -1025,7 +1044,7 @@ impl DnsForwarder {
     }
 
     /// H3/DoH3 (DNS over HTTP/3) 转发
-    async fn forward_h3(&self, request: &Message, upstream_addr: &str) -> Result<Message> {
+    async fn forward_h3(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>) -> Result<Message> {
         // 提取 URL
         let addr_part = upstream_addr.strip_prefix("h3://")
             .or_else(|| upstream_addr.strip_prefix("https3://"))
@@ -1036,6 +1055,41 @@ impl DnsForwarder {
             format!("https://{}", addr_part)
         } else {
             format!("https://{}/dns-query", addr_part)
+        };
+
+        // 从 URL 中提取域名和路径
+        let parsed_url = url::Url::parse(&url)?;
+        let host = parsed_url.host_str()
+            .ok_or_else(|| anyhow::anyhow!("H3 URL 中没有主机名"))?
+            .to_string();
+        let port = parsed_url.port().unwrap_or(443);
+        let path = parsed_url.path();
+        let scheme = parsed_url.scheme();
+
+        // 如果配置了 bootstrap DNS，使用 bootstrap 解析域名获取 IP
+        let (final_url, host_header) = if let Some(bootstrap_servers) = bootstrap {
+            match self.resolve_with_bootstrap(&host, bootstrap_servers).await {
+                Ok(ips) => {
+                    let ip = ips.first()
+                        .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
+                    debug!("H3 使用 bootstrap 解析: {} -> {}", host, ip);
+                    
+                    // 使用 IP 构建 URL
+                    let new_url = if port != 443 {
+                        format!("{}://{}:{}{}", scheme, ip, port, path)
+                    } else {
+                        format!("{}://{}{}", scheme, ip, path)
+                    };
+                    (new_url, Some(host.clone()))
+                }
+                Err(e) => {
+                    warn!("H3 Bootstrap DNS 解析失败: {}, 回退到系统 DNS", e);
+                    (url.clone(), None)
+                }
+            }
+        } else {
+            debug!("H3 未配置 bootstrap DNS，使用系统 DNS 解析");
+            (url.clone(), None)
         };
 
         let timeout = Duration::from_secs(self.config.timeout_secs);
@@ -1049,16 +1103,23 @@ impl DnsForwarder {
         // 构建 H3 请求 (使用 reqwest 的 http3 特性如果可用，否则降级到 HTTPS)
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .danger_accept_invalid_certs(host_header.is_some()) // 如果使用 IP，接受无效证书
             .build()?;
+
+        let mut request_builder = client
+            .get(&final_url)
+            .query(&[("dns", &dns_query)])
+            .header("Accept", "application/dns-message")
+            .header("User-Agent", "creskyDNS/h3");
+
+        // 如果使用了 IP 地址，设置 Host header
+        if let Some(original_host) = host_header {
+            request_builder = request_builder.header("Host", original_host);
+        }
 
         let response = tokio::time::timeout(
             timeout,
-            client
-                .get(&url)
-                .query(&[("dns", &dns_query)])
-                .header("Accept", "application/dns-message")
-                .header("User-Agent", "creskyDNS/h3")
-                .send()
+            request_builder.send()
         ).await??;
 
         if !response.status().is_success() {
