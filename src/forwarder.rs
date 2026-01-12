@@ -807,7 +807,7 @@ impl DnsForwarder {
         
         // 尝试每个 bootstrap DNS 服务器
         for bootstrap_addr in bootstrap_servers {
-            debug!("使用 bootstrap DNS {} 解析域名: {}", bootstrap_addr, domain);
+            debug!("[Bootstrap] 使用 {} 解析 DNS 服务器域名: {}", bootstrap_addr, domain);
             
             // 构造 DNS 查询（A 记录）
             let domain_name = match Name::from_str(&format!("{}.", domain)) {
@@ -857,6 +857,12 @@ impl DnsForwarder {
     async fn forward_doh(&self, request: &Message, upstream_addr: &str, bootstrap: Option<&Vec<String>>, proxy: Option<&String>) -> Result<Message> {
         let timeout = Duration::from_secs(self.config.timeout_secs);
         
+        // 提取用户查询的域名（用于日志）
+        let query_name = request.queries().first()
+            .map(|q| q.name().to_utf8())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        debug!("[DoH] 开始处理查询: {} -> {}", query_name, upstream_addr);
+        
         // 解析 URL，提取域名
         let url = upstream_addr.to_string();
         let domain = url
@@ -877,7 +883,8 @@ impl DnsForwarder {
                         .ok_or_else(|| anyhow::anyhow!("Bootstrap 解析未返回 IP 地址"))?;
                     // 替换 URL 中的域名为 IP
                     let ip_url = url.replace(domain, ip);
-                    debug!("DoH 使用 bootstrap 解析: {} -> {}, URL: {}", domain, ip, ip_url);
+                    debug!("[Bootstrap] DoH 服务器 {} -> IP: {}", domain, ip);
+                    debug!("[DoH] 使用 IP URL: {}", ip_url);
                     ip_url
                 }
                 Err(e) => {
