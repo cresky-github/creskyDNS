@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 
     // 显示所有上游列表
     for (name, upstream_list) in &config.upstreams {
-        info!("上游列表 '{}' : {:?}", name, upstream_list.addresses);
+        info!("上游列表 '{}' : {:?}", name, upstream_list.addr);
     }
 
     // 显示所有规则

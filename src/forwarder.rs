@@ -486,7 +486,7 @@ impl DnsForwarder {
     /// 转发到上游列表
     async fn forward_to_upstream_list(&self, request: &Message, upstream_list: &UpstreamList) -> Result<Message> {
         // 目前只使用第一个上游地址
-        let upstream_addr = upstream_list.addresses.first()
+        let upstream_addr = upstream_list.addr.first()
             .ok_or_else(|| anyhow::anyhow!("上游列表为空"))?;
         
         let protocol = Self::parse_protocol(upstream_addr)?;

@@ -60,19 +60,19 @@ cache:
 # 4) 上游 DNS（引用上述缓存）
 upstreams:
   cn_dns:
-    addresses:
+    addr:
       - "https://dns.alidns.com/dns-query"
 
   global_dns:
-    addresses:
+    addr:
       - "https://dns.google/dns-query"
 
   ad_hole:
-    addresses:
+    addr:
       - "udp://127.0.0.1:1"      # 黑洞（拦截广告域名）
 
   local_dns:
-    addresses:
+    addr:
       - "udp://192.168.1.1:53"   # 内网 DNS（示例）
 
 # 5) 列表（域名与 IP CIDR）
