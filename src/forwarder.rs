@@ -939,10 +939,15 @@ impl DnsForwarder {
                 )
             }));
             
-            let tls_config = Arc::new(ClientConfig::builder()
+            let mut tls_config = ClientConfig::builder()
                 .with_safe_defaults()
                 .with_root_certificates(root_store)
-                .with_no_client_auth());
+                .with_no_client_auth();
+            
+            // 设置 ALPN 协议: 优先 HTTP/1.1 (因为我们使用手动 HTTP 实现)
+            tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            
+            let tls_config = Arc::new(tls_config);
             
             // 创建 TLS 连接器并设置 SNI
             let connector = tokio_rustls::TlsConnector::from(tls_config);
