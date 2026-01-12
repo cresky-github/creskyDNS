@@ -1,5 +1,6 @@
 /.git/
 /target/
+/md/
 Cargo.lock
 *.swp
 *.swo
