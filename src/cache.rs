@@ -126,13 +126,14 @@ impl DomainCache {
                 continue;
             }
             
-            // 格式: |cache ID|match domain|upstream|ttl|IP(及其它信息)|
+            // 格式: |cache ID|match domain|upstream|qname|ttl|IP(及其它信息)|
             let parts: Vec<&str> = line.split('|').filter(|s| !s.is_empty()).collect();
-            if parts.len() != 5 {
+            if parts.len() != 6 {
                 continue;
             }
             
-            let ttl: u64 = parts[3].parse().unwrap_or(0);
+            let qname = parts[3].to_string();
+            let ttl: u64 = parts[4].parse().unwrap_or(0);
             
             // 创建简单的 DNS 消息（冷启动时只保存 IP 信息，不完整重建 Message）
             // 实际查询时会重新获取完整记录
@@ -142,7 +143,7 @@ impl DomainCache {
             let record = CachedDnsRecord {
                 cache_id: parts[0].to_string(),
                 matched_domain: parts[1].to_string(),
-                domain: parts[1].to_string(),
+                domain: qname.clone(),
                 upstream: parts[2].to_string(),
                 original_ttl: ttl,
                 expire_at: now + Duration::from_secs(ttl),
@@ -150,7 +151,7 @@ impl DomainCache {
                 message,
             };
             
-            cache.write().unwrap().insert(parts[1].to_string(), record);
+            cache.write().unwrap().insert(qname, record);
             loaded += 1;
         }
         
@@ -282,11 +283,12 @@ impl DomainCache {
                 // 提取 IP 信息
                 let ip_info = Self::extract_ip_info(&entry.message);
                 
-                // 格式: |cache ID|match domain|upstream|ttl|IP(及其它信息)|
-                writeln!(file, "|{}|{}|{}|{}|{}|", 
+                // 格式: |cache ID|match domain|upstream|qname|ttl|IP(及其它信息)|
+                writeln!(file, "|{}|{}|{}|{}|{}|{}|", 
                     entry.cache_id, 
                     entry.matched_domain, 
                     entry.upstream,
+                    entry.domain,
                     entry.remaining_ttl(),
                     ip_info)?;
             }
