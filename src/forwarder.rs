@@ -10,6 +10,7 @@ use tracing::{debug, warn, info};
 use base64;
 use std::sync::Arc;
 use rustls::ClientConfig;
+use reqwest::Url;
 
 /// DNS 协议类型
 #[derive(Clone, Debug)]
@@ -1058,7 +1059,7 @@ impl DnsForwarder {
         };
 
         // 从 URL 中提取域名和路径
-        let parsed_url = url::Url::parse(&url)?;
+        let parsed_url = Url::parse(&url)?;
         let host = parsed_url.host_str()
             .ok_or_else(|| anyhow::anyhow!("H3 URL 中没有主机名"))?
             .to_string();
@@ -1101,9 +1102,10 @@ impl DnsForwarder {
         let dns_query = URL_SAFE_NO_PAD.encode(&request_data);
 
         // 构建 H3 请求 (使用 reqwest 的 http3 特性如果可用，否则降级到 HTTPS)
+        let accept_invalid_certs: bool = host_header.is_some();
         let client = reqwest::Client::builder()
             .timeout(timeout)
-            .danger_accept_invalid_certs(host_header.is_some()) // 如果使用 IP，接受无效证书
+            .danger_accept_invalid_certs(accept_invalid_certs) // 如果使用 IP，接受无效证书
             .build()?;
 
         let mut request_builder = client
